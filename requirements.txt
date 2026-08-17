@@ -1,3 +1,3 @@
 mss==9.0.1
-pyput==1.7.6
-Pillow=10.2.0
+pynput==1.7.6
+Pillow==10.2.0

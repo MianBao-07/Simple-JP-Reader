@@ -37,7 +37,7 @@ class ControlPanel(QWidget):
             QListWidget::item:hover { background-color: rgba(255, 255, 255, 20); cursor: pointer; }
         """)
         
-        # --- NEW: Click to copy signal ---
+        # click2copy
         self.history_list.itemClicked.connect(self.copy_history_item)
         
         self.history_layout.addWidget(self.history_list)
@@ -47,7 +47,7 @@ class ControlPanel(QWidget):
         self.tab_dicts = QWidget()
         self.dicts_layout = QVBoxLayout(self.tab_dicts)
         self.init_dictionary_tab()
-        self.tabs.addTab(self.tab_dicts, "Dictionaries")
+        self.tabs.addTab(self.tab_dicts, "Dictionaries (Coming Soon)")
 
         # TAB 3: OCR Profiles
         self.tab_ocr = QWidget()
@@ -63,7 +63,7 @@ class ControlPanel(QWidget):
         
         signals.update_history.connect(self.add_to_history)
 
-    # --- NEW: Copy Logic ---
+    # copy logic
     def copy_history_item(self, item):
         # Send text to clipboard
         QApplication.clipboard().setText(item.text())
@@ -126,7 +126,7 @@ class ControlPanel(QWidget):
         self.ocr_layout.addStretch()
 
     def init_appearance_tab(self):
-        group = QGroupBox("Visual Feedback (Coming Soon)")
+        group = QGroupBox("Visual Feedback")
         form = QFormLayout()
         
         slider = QSlider(Qt.Orientation.Horizontal)

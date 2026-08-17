@@ -8,14 +8,10 @@ import re
 LOCAL_DICT = {}
 DICT_LOADED = False
 
-# --- NEW: MASTER TOGGLE ---
+# MASTER TOGGLE
 ENABLE_OFFLINE_DICT = False # Change to True later when you want to resume testing
 
 def flatten_structured_content(node):
-    """
-    Recursively digs through Yomitan's complex JSON nodes.
-    Processes children FIRST, then applies formatting to prevent empty bullets.
-    """
     if isinstance(node, str):
         return node
     elif isinstance(node, list):
@@ -56,7 +52,7 @@ def flatten_structured_content(node):
 def load_local_dictionary():
     global LOCAL_DICT, DICT_LOADED
     
-    # --- NEW: Check the master toggle before loading ---
+    # CHECKS MASTER TOGGLE FIRST
     if not ENABLE_OFFLINE_DICT or DICT_LOADED: 
         return
         

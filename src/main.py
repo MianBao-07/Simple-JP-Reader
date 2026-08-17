@@ -13,7 +13,7 @@ class ControlPanel(QWidget):
         super().__init__()
         self.keyboard_listener = keyboard_listener
         
-        self.setWindowTitle("X-Ray Lens - Workspace")
+        self.setWindowTitle("Simple JP Reader - Workspace")
         self.resize(450, 450)
         
         self.layout = QVBoxLayout()
@@ -47,7 +47,7 @@ class ControlPanel(QWidget):
         self.tab_dicts = QWidget()
         self.dicts_layout = QVBoxLayout(self.tab_dicts)
         self.init_dictionary_tab()
-        self.tabs.addTab(self.tab_dicts, "Dictionaries (Coming Soon)")
+        self.tabs.addTab(self.tab_dicts, "Dictionaries")
 
         # TAB 3: OCR Profiles
         self.tab_ocr = QWidget()
@@ -82,7 +82,7 @@ class ControlPanel(QWidget):
     # --- TAB LAYOUTS ---
 
     def init_dictionary_tab(self):
-        group_term = QGroupBox("Term Dictionaries")
+        group_term = QGroupBox("Term Dictionaries  (Coming Soon)")
         l_term = QVBoxLayout()
         self.chk_jitendex = QCheckBox("Jitendex (Japanese-to-English)")
         self.chk_jitendex.setChecked(True)
@@ -92,7 +92,7 @@ class ControlPanel(QWidget):
         group_term.setLayout(l_term)
         self.dicts_layout.addWidget(group_term)
 
-        group_kanji = QGroupBox("Kanji Dictionaries")
+        group_kanji = QGroupBox("Kanji Dictionaries  (Coming Soon)")
         layout_kanji = QVBoxLayout()
         self.chk_kanjidic = QCheckBox("KANJIDIC (Readings, Meanings, Stroke Order)")
         layout_kanji.addWidget(self.chk_kanjidic)
@@ -112,7 +112,7 @@ class ControlPanel(QWidget):
         self.dicts_layout.addStretch()
 
     def init_ocr_tab(self):
-        group = QGroupBox("Engine Settings (Coming Soon)")
+        group = QGroupBox("Model Settings (Coming Soon)")
         l = QVBoxLayout()
         l.addWidget(QCheckBox("Enable Grayscale Pre-processing (High Accuracy)"))
         l.addWidget(QCheckBox("Enable 3x Upscaling"))
@@ -126,7 +126,7 @@ class ControlPanel(QWidget):
         self.ocr_layout.addStretch()
 
     def init_appearance_tab(self):
-        group = QGroupBox("Visual Feedback")
+        group = QGroupBox("Visual Feedback (Coming Soon)")
         form = QFormLayout()
         
         slider = QSlider(Qt.Orientation.Horizontal)

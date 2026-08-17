@@ -2,7 +2,7 @@
 
 A lightweight, customizable Japanese OCR and reading assistant tool built with Python and PyQt6. Simply press a hotkey to snip a section of your screen, and the app will instantly extract the Japanese text, de-conjugate verbs, and provide dictionary definitions.
 
-After experimenting a handful of Japanese-learning apps myself, I have dedicated a little personal projects that is free, simple and customizable to my needs. Mostly inspired by ShareX's OCR and Yomitan's Popup Dictionary, I combined both into all-in-one, simplified app that works on desktop.
+After experimenting a handful of Japanese-learning apps myself, I have dedicated a little personal projects that is free, simple and customizable to my needs, which not a lot of commercial apps provide.
 
 ## ✨ Current Features
 
@@ -11,7 +11,6 @@ After experimenting a handful of Japanese-learning apps myself, I have dedicated
 * **Smart Lemmatization:** Uses Janome to automatically detect and de-conjugate verbs to their dictionary base form (e.g., 食べたくない -> 食べる).
 * **Live Dictionary Lookups:** Hooks directly into the Jisho.org API to pull definitions, readings, and word frequencies.
 * **Click-to-Copy History:** A dedicated history tab logs your snips. Click any sentence to instantly copy it to your clipboard.
-* **Draggable Overlay UI:** A sleek, transparent, non-intrusive interface that floats above your active windows.
 
 ## 🚀 Roadmap / Upcoming Features
 
@@ -20,8 +19,8 @@ After experimenting a handful of Japanese-learning apps myself, I have dedicated
 - [ ] **"No Dim":** Transparent snipping mode that doesn't dim the screen.
 - [ ] **Text-to-Speech (TTS):** Native audio playback to verify pitch accent and pronunciation.
 - [ ] **Settings:** For full customizable features/add-ons.
-- [ ] **Improved UI:** Make it absolute an absolute beauty, with different color scheme options.
-- [ ] **Universal OCR:** Inspired by rtr46's universal ocr, (a.k.a. meikipop), will try to implement as a secondary OCR option.
+- [ ] **Improved UI:** Make it absolute an absolute beauty, with customizable options.
+- [ ] **Hot-Swappable OCRs:** Be able to switch between multiple-given OCRs (meikiocr, apple live text, etc.)
 
 ## 🛠️ Installation & Usage (Developer Setup)
 

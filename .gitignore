@@ -8,3 +8,6 @@ venv/
 
 # Offline Dictionaries
 src/dictionaries/
+
+# Ignore test pics
+*.png

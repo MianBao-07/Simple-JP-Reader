@@ -1,5 +1,6 @@
 from PyQt6.QtWidgets import (QApplication, QWidget, QPushButton, QHBoxLayout, 
-                             QVBoxLayout, QLabel, QRubberBand, QScrollArea, QFrame, QSizeGrip)
+                             QVBoxLayout, QLabel, QRubberBand, QScrollArea, 
+                             QFrame, QSizeGrip, QLineEdit)
 from PyQt6.QtCore import Qt, QRect, QPoint, QTimer, pyqtSignal, QObject
 from PyQt6.QtGui import QGuiApplication, QPainter, QPen, QColor, QBrush
 
@@ -16,6 +17,7 @@ class SignalManager(QObject):
     trigger_snip = pyqtSignal()
     show_results = pyqtSignal(list, int, int)
     update_history = pyqtSignal(str) 
+    word_edited = pyqtSignal()
 
 signals = SignalManager()
 
@@ -36,32 +38,31 @@ class ExpandableWordWidget(QWidget):
         self.header_layout = QHBoxLayout(self.header_widget)
         self.header_layout.setContentsMargins(0, 0, 0, 0)
 
-        if self.surface != self.base_form:
-            header_text = f"{self.surface} <span style='font-size: 13px; color: #9CA3AF;'>({self.base_form})</span>"
-        else:
-            header_text = self.surface
-
-        self.lbl_word = QLabel(header_text)
-        self.lbl_word.setTextFormat(Qt.TextFormat.RichText)
-        self.lbl_word.setStyleSheet("font-size: 18px; font-weight: bold; color: #E2E8F0;")
+        self.edit_word = EditableWord(self.surface)
+        self.header_layout.addWidget(self.edit_word)
         
+        self.edit_word.returnPressed.connect(self.update_word)
+
+        # Handle the lemma (dictionary form) if it's conjugated
+        self.lbl_lemma = None
+        if self.surface != self.base_form:
+            self.lbl_lemma = QLabel(f"({self.base_form})")
+            self.lbl_lemma.setStyleSheet("font-size: 13px; color: #9CA3AF;")
+            self.header_layout.addWidget(self.lbl_lemma)
+
+        self.header_layout.addStretch()
+
+        self.pitch_graph = PitchGraphWidget("", pitch_drop=-1)
+        self.header_layout.addWidget(self.pitch_graph)
+
         self.btn_toggle = QPushButton("v")
         self.btn_toggle.setFixedSize(24, 24)
         self.btn_toggle.setStyleSheet("background: transparent; color: #9CA3AF; font-weight: bold; font-size: 16px; border: none;")
         self.btn_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
         
         self.btn_toggle.clicked.connect(self.toggle)
-        self.lbl_word.mousePressEvent = lambda e: self.toggle()
-        self.lbl_word.setCursor(Qt.CursorShape.PointingHandCursor)
-
-        self.header_layout.addWidget(self.lbl_word)
-        self.header_layout.addStretch()
-
-        dummy_drop = len(self.base_form) % 3 
-        self.pitch_graph = PitchGraphWidget(self.base_form, pitch_drop=dummy_drop)
-        self.header_layout.addWidget(self.pitch_graph)
-
         self.header_layout.addWidget(self.btn_toggle)
+        
         self.layout.addWidget(self.header_widget)
 
         # 2. Hidden Content Area
@@ -82,6 +83,45 @@ class ExpandableWordWidget(QWidget):
         self.sep.setStyleSheet("background-color: rgba(255, 255, 255, 30);")
         self.layout.addWidget(self.sep)
 
+        self.fetch_data()
+
+    def update_word(self):
+        new_text = self.edit_word.text().strip()
+
+        if not new_text or new_text == self.surface:
+            self.edit_word.clearFocus()
+            return
+
+        self.surface = new_text
+        self.base_form = new_text # assume manual edits are dict form
+        self.data_fetched = False
+
+        if self.lbl_lemma:
+            self.lbl_lemma.hide()
+
+        if hasattr(self, 'pitch_graph'):
+            dummy_drop = len(self.base_form) % 3
+            self.pitch_graph.update_pitch(self.base_form, dummy_drop)
+            self.pitch_graph.show()
+
+        for i in reversed(range(self.content_layout.count())):
+            widget = self.content_layout.itemAt(i).widget()
+            if widget:
+                widget.setParent(None)
+
+        self.lbl_loading = QLabel("Loading Dictionary...")
+        self.lbl_loading.setStyleSheet("color: #9CA3AF; font-size: 12px;")
+        self.content_layout.addWidget(self.lbl_loading)
+
+        self.edit_word.clearFocus()
+
+        signals.word_edited.emit()
+
+        if not self.content_widget.isHidden():
+            self.fetch_data()
+        else:
+            self.toggle()
+
     def toggle(self):
         if self.content_widget.isHidden():
             self.content_widget.show()
@@ -99,6 +139,11 @@ class ExpandableWordWidget(QWidget):
         data = get_real_data(self.base_form, fallback_term=self.surface)
         self.lbl_loading.deleteLater()
 
+        if hasattr(self, 'pitch_graph'):
+            real_pitch_drop = data.get("pitch_drop", 0)
+            actual_reading = data.get("pitch", self.base_form)
+            self.pitch_graph.update_pitch(actual_reading, real_pitch_drop)
+
         meta_text = []
         if USER_SETTINGS["show_pitch"]: meta_text.append(f"Reading: {data.get('pitch', '???')}")
         if USER_SETTINGS["show_freq"]: meta_text.append(f"Freq: {data.get('freq', 'Unknown')}")
@@ -112,12 +157,12 @@ class ExpandableWordWidget(QWidget):
             # Handle the structured HTML list (Offline Dictionaries)
             if "meanings_list" in data:
                 for entry in data["meanings_list"]:
-                    # 1. Create a styled header for the Dictionary Name
+                    # Create a styled header for the Dictionary Name
                     lbl_dict_name = QLabel(f"<b>[ {entry['dict_name']} ]</b>")
                     lbl_dict_name.setStyleSheet("color: #60A5FA; font-size: 12px; margin-top: 5px;")
                     self.content_layout.addWidget(lbl_dict_name)
 
-                    # 2. Render the HTML content
+                    # Render the HTML content
                     lbl_mean = QLabel(entry['html_content'])
                     lbl_mean.setTextFormat(Qt.TextFormat.RichText) # Force HTML rendering
                     lbl_mean.setStyleSheet("font-size: 14px; color: white;")
@@ -137,6 +182,43 @@ class ExpandableWordWidget(QWidget):
 
         self.data_fetched = True
 
+# --- EDITABLE TEXT ---
+class EditableWord(QLineEdit):
+    def __init__(self, word):
+        super().__init__(word)
+
+        font = self.font()
+        font.setPixelSize(18)
+        font.setBold(True)
+        self.setFont(font)
+
+        self.setStyleSheet("""
+            QLineEdit {
+                background: transparent;
+                border: none;
+                color: #E2E8F0;
+                font-size: 18px;
+                font-weight: bold;
+                padding: 0px;
+            }
+            QLineEdit: focus {
+                background: rgba(255, 255, 255, 0.1);
+                border: 1px solid #666;
+                border-radius: 3px;
+                padding: 2px;
+            }
+        """)
+
+        self.textChanged.connect(self.adjust_width)
+        self.adjust_width(word)
+
+        self.setSizePolicy(self.sizePolicy().Policy.Fixed, self.sizePolicy().Policy.Fixed)
+        self.setCursorPosition(0)
+
+    def adjust_width(self, text):
+        metrics = self.fontMetrics()
+        width = metrics.horizontalAdvance(text) + 50
+        self.setFixedWidth(width)
 
 # --- VERTICAL OVERLAY (INFO BOX) ---
 class ResultOverlay(QWidget):
@@ -165,7 +247,7 @@ class ResultOverlay(QWidget):
         self.top_bar = QHBoxLayout()
         self.btn_close = QPushButton("X")
         self.btn_close.setFixedSize(20, 20)
-        self.btn_close.setStyleSheet("background: #EF4444; color: white; border-radius: 10px; font-weight: bold; border: none;")
+        self.btn_close.setStyleSheet("color: white; border-radius: 10px; font-weight: bold; border: none;") # red circle -> background: #EF4444; 
         self.btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_close.clicked.connect(self.hide)
         self.top_bar.addStretch()
@@ -207,6 +289,7 @@ class ResultOverlay(QWidget):
         self._drag_start_position = QPoint()
 
         signals.show_results.connect(self.display_words)
+        signals.word_edited.connect(self.rebuild_sentence)
 
     def display_words(self, token_list, x, y):
         for i in reversed(range(self.scroll_layout.count())): 
@@ -241,6 +324,15 @@ class ResultOverlay(QWidget):
         self.move(int(spawn_x), int(spawn_y))
         self.show()
 
+    def rebuild_sentence(self):
+        full_text = ""
+        for i in range(self.scroll_layout.count()):
+            widget = self.scroll_layout.itemAt(i).widget()
+            if hasattr(widget, 'surface'):
+                full_text += widget.surface
+
+        self.lbl_sentence.setText(full_text)
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self._is_dragging = True
@@ -265,12 +357,20 @@ class PitchGraphWidget(QWidget):
         self.pitch_drop = pitch_drop
         self.setFixedSize(100, 24)
 
+    def update_pitch(self, new_word, new_pitch_drop):
+        self.word = new_word
+        self.pitch_drop = new_pitch_drop
+        self.update()
+
     def paintEvent(self, event):
+        if self.pitch_drop == -1:
+            return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # dummy
-        mora_count = max(2, len(self.word))
+        # ignore small kana
+        small_kana = set("ゃゅょぁぃぅぇぉャュョァィゥェォ")
+        mora_count = max(1, sum(1 for c in self.word if c not in small_kana))
 
         high_y = 4          # high
         low_y = 16          # low

@@ -39,13 +39,11 @@ class SnippingWidget(QWidget):
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            # 1. Hide the entire dark overlay immediately so it clears the screen
             self.hide()
             
-            # 2. Calculate the coordinates
             rect = QRect(self.origin, event.position().toPoint()).normalized()
             
-            # 3. Wait exactly 100 milliseconds for Windows to redraw the screen, THEN capture
+            # 100ms delay
             QTimer.singleShot(100, lambda: self.capture_screen(rect))
 
     def capture_screen(self, rect):

@@ -11,3 +11,6 @@ src/dictionaries/
 
 # Ignore test pics
 *.png
+
+src/dictionary.db
+dictionary.db

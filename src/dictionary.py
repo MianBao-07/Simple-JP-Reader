@@ -26,21 +26,18 @@ def flatten_structured_content(node):
         tag = node.get("tag", "span")
         
         # PyQt6 doesn't support HTML <ruby> tags natively, so we hide the furigana 
-        # (rt/rp) to prevent the kanji from looking cluttered.
+        # (rt/rp) to prevent the kanji from looking cluttered
         if tag in ["rt", "rp"]:
             return ""
             
-        # 1. Process the contents inside this tag FIRST
         res = ""
         if "content" in node:
             res += flatten_structured_content(node["content"])
         if "text" in node:
             res += flatten_structured_content(node["text"])
             
-        # 2. Wrap the processed text in real HTML
         if tag == "br":
             return "<br>"
-        # PyQt6 supports all of these basic structural and formatting tags natively!
         elif tag in ["div", "p", "span", "ul", "ol", "li", "b", "i", "strong", "em", "table", "tr", "td", "th"]:
             # Small tweak to make lists look a bit tighter in the UI
             if tag in ["ul", "ol"]:
@@ -142,13 +139,12 @@ def get_real_data(lookup_term, fallback_term=None):
     if fallback_term and fallback_term != lookup_term:
         terms_to_try.append(fallback_term)
 
-    # Because LOCAL_DICT is empty, this offline check will gracefully skip
+    # Because LOCAL_DICT is empty, this offline check will skip
     for term in terms_to_try:
         if term in LOCAL_DICT:
             print(f"-> Found '{term}' instantly via Offline Dictionary.")
             return LOCAL_DICT[term]
 
-    # The code will naturally fall through to your working Jisho API logic
     print(f"-> '{lookup_term}' not found offline. Asking Jisho API...")
     for term in terms_to_try:
         if not term or not term.strip():

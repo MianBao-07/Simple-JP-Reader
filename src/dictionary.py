@@ -3,49 +3,53 @@ import json
 import glob
 import requests
 import re
+import html
 
 # --- GLOBAL CACHE ---
 LOCAL_DICT = {}
 DICT_LOADED = False
 
 # MASTER TOGGLE
-ENABLE_OFFLINE_DICT = False # Change to True later when you want to resume testing
+ENABLE_OFFLINE_DICT = True # Change to True later when testing
 
 def flatten_structured_content(node):
     if isinstance(node, str):
-        return node
-    elif isinstance(node, list):
-        return "".join(flatten_structured_content(n) for n in node)
-    elif isinstance(node, dict):
-        tag = node.get("tag", "")
+        # Escape raw text so accidental symbols don't break the HTML
+        return html.escape(node)
         
-        # Completely skip furigana readings (rt) and ruby parentheses (rp)
+    elif isinstance(node, list):
+        # If it's a list, parse every item and glue the HTML together
+        return "".join(flatten_structured_content(n) for n in node)
+        
+    elif isinstance(node, dict):
+        # Default to a generic span if the dictionary doesn't specify a tag
+        tag = node.get("tag", "span")
+        
+        # PyQt6 doesn't support HTML <ruby> tags natively, so we hide the furigana 
+        # (rt/rp) to prevent the kanji from looking cluttered.
         if tag in ["rt", "rp"]:
             return ""
             
-        # 1. Process the contents of the tag FIRST
+        # 1. Process the contents inside this tag FIRST
         res = ""
         if "content" in node:
             res += flatten_structured_content(node["content"])
         if "text" in node:
             res += flatten_structured_content(node["text"])
             
-        # 2. Apply formatting to the processed text
-        if tag == "li":
-            if res.strip():
-                return f"\n• {res}"
-            return ""
+        # 2. Wrap the processed text in real HTML
+        if tag == "br":
+            return "<br>"
+        # PyQt6 supports all of these basic structural and formatting tags natively!
+        elif tag in ["div", "p", "span", "ul", "ol", "li", "b", "i", "strong", "em", "table", "tr", "td", "th"]:
+            # Small tweak to make lists look a bit tighter in the UI
+            if tag in ["ul", "ol"]:
+                return f"<{tag} style='margin-top: 2px; margin-bottom: 2px;'>{res}</{tag}>"
+            return f"<{tag}>{res}</{tag}>"
+        else:
+            # Fallback for unrecognized Yomitan-specific tags (like 'ruby' or 'rb')
+            return f"<span>{res}</span>"
             
-        elif tag == "br":
-            return "\n"
-            
-        elif tag in ["div", "p"]:
-            return f"{res}\n"
-            
-        elif tag == "span":
-            return f"{res} "
-            
-        return res
     return ""
 
 
@@ -104,11 +108,21 @@ def load_local_dictionary():
                     LOCAL_DICT[term] = {
                         "pitch": reading,
                         "freq": "Offline DB", 
-                        "meaning": meaning_text
+                        "meanings_list": [
+                            {
+                                "dict_name": "Jitendex",
+                                "html_content": meaning_text 
+                            }
+                        ]
                     }
                 else:
-                    if meaning_text not in LOCAL_DICT[term]["meaning"]:
-                        LOCAL_DICT[term]["meaning"] += f"\n\n--- Also: ---\n{meaning_text}"
+                    # Check if this exact meaning is already in the list to avoid duplicates
+                    existing_meanings = [m["html_content"] for m in LOCAL_DICT[term]["meanings_list"]]
+                    if meaning_text not in existing_meanings:
+                        LOCAL_DICT[term]["meanings_list"].append({
+                            "dict_name": "Jitendex",
+                            "html_content": meaning_text
+                        })
                     
     print(f"[Dictionary] Success! Loaded {len(LOCAL_DICT):,} words into memory.")
     DICT_LOADED = True

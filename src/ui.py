@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (QApplication, QWidget, QPushButton, QHBoxLayout, 
-                             QVBoxLayout, QLabel, QRubberBand, QScrollArea, QFrame)
+                             QVBoxLayout, QLabel, QRubberBand, QScrollArea, QFrame, QSizeGrip)
 from PyQt6.QtCore import Qt, QRect, QPoint, QTimer, pyqtSignal, QObject
-from PyQt6.QtGui import QGuiApplication
+from PyQt6.QtGui import QGuiApplication, QPainter, QPen, QColor, QBrush
 
 from dictionary import get_real_data
 from model import extract_words
@@ -56,6 +56,11 @@ class ExpandableWordWidget(QWidget):
 
         self.header_layout.addWidget(self.lbl_word)
         self.header_layout.addStretch()
+
+        dummy_drop = len(self.base_form) % 3 
+        self.pitch_graph = PitchGraphWidget(self.base_form, pitch_drop=dummy_drop)
+        self.header_layout.addWidget(self.pitch_graph)
+
         self.header_layout.addWidget(self.btn_toggle)
         self.layout.addWidget(self.header_widget)
 
@@ -95,19 +100,40 @@ class ExpandableWordWidget(QWidget):
         self.lbl_loading.deleteLater()
 
         meta_text = []
-        if USER_SETTINGS["show_pitch"]: meta_text.append(f"Reading: {data['pitch']}")
-        if USER_SETTINGS["show_freq"]: meta_text.append(f"Freq: {data['freq']}")
+        if USER_SETTINGS["show_pitch"]: meta_text.append(f"Reading: {data.get('pitch', '???')}")
+        if USER_SETTINGS["show_freq"]: meta_text.append(f"Freq: {data.get('freq', 'Unknown')}")
 
         if meta_text:
             lbl_meta = QLabel(" • ".join(meta_text))
-            lbl_meta.setStyleSheet("font-size: 13px; color: #9CA3AF;")
+            lbl_meta.setStyleSheet("font-size: 13px; color: #9CA3AF; margin-bottom: 5px;")
             self.content_layout.addWidget(lbl_meta)
 
         if USER_SETTINGS["show_meaning"]:
-            lbl_mean = QLabel(data['meaning'])
-            lbl_mean.setStyleSheet("font-size: 14px; color: white;")
-            lbl_mean.setWordWrap(True)
-            self.content_layout.addWidget(lbl_mean)
+            # Handle the structured HTML list (Offline Dictionaries)
+            if "meanings_list" in data:
+                for entry in data["meanings_list"]:
+                    # 1. Create a styled header for the Dictionary Name
+                    lbl_dict_name = QLabel(f"<b>[ {entry['dict_name']} ]</b>")
+                    lbl_dict_name.setStyleSheet("color: #60A5FA; font-size: 12px; margin-top: 5px;")
+                    self.content_layout.addWidget(lbl_dict_name)
+
+                    # 2. Render the HTML content
+                    lbl_mean = QLabel(entry['html_content'])
+                    lbl_mean.setTextFormat(Qt.TextFormat.RichText) # Force HTML rendering
+                    lbl_mean.setStyleSheet("font-size: 14px; color: white;")
+                    lbl_mean.setWordWrap(True)
+                    self.content_layout.addWidget(lbl_mean)
+            
+            # --- FALLBACK: Handle plain text (Jisho.org API) ---
+            elif "meaning" in data:
+                lbl_dict_name = QLabel("<b>[ Jisho API ]</b>")
+                lbl_dict_name.setStyleSheet("color: #34D399; font-size: 12px; margin-top: 5px;")
+                self.content_layout.addWidget(lbl_dict_name)
+                
+                lbl_mean = QLabel(data['meaning'])
+                lbl_mean.setStyleSheet("font-size: 14px; color: white;")
+                lbl_mean.setWordWrap(True)
+                self.content_layout.addWidget(lbl_mean)
 
         self.data_fetched = True
 
@@ -118,6 +144,8 @@ class ResultOverlay(QWidget):
         super().__init__()
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
         
+        self.setMinimumSize(300,150)
+
         self.setObjectName("MainBackground")
         self.setStyleSheet("""
             #MainBackground { 
@@ -128,10 +156,10 @@ class ResultOverlay(QWidget):
         """)
         
         self.setFixedWidth(320)
-        self.setMaximumHeight(450)
+        # self.setMaximumHeight(450)
 
         self.layout = QVBoxLayout()
-        self.layout.setContentsMargins(15, 15, 15, 15)
+        # self.layout.setContentsMargins(0, 0, 0, 0)
         self.setLayout(self.layout)
 
         self.top_bar = QHBoxLayout()
@@ -166,6 +194,14 @@ class ResultOverlay(QWidget):
 
         self.scroll_area.setWidget(self.scroll_content)
         self.layout.addWidget(self.scroll_area)
+
+        self.grip_layout = QHBoxLayout()
+        self.grip_layout.setContentsMargins(0, 0, 0, 0)
+        self.grip_layout.addStretch()
+        self.size_grip = QSizeGrip(self)
+        self.grip_layout.addWidget(self.size_grip, 0, Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignRight)
+        self.layout.addLayout(self.grip_layout)
+
 
         self._is_dragging = False
         self._drag_start_position = QPoint()
@@ -221,6 +257,59 @@ class ResultOverlay(QWidget):
             self._is_dragging = False
             event.accept()
 
+# --- PITCH GRAPH ---
+class PitchGraphWidget(QWidget):
+    def __init__(self, word, pitch_drop):
+        super().__init__()
+        self.word = word
+        self.pitch_drop = pitch_drop
+        self.setFixedSize(100, 24)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # dummy
+        mora_count = max(2, len(self.word))
+
+        high_y = 4          # high
+        low_y = 16          # low
+        radius = 3          # size of dots
+        spacing = 12        # horizontal space between dots
+        start_x = self.width() - (mora_count * spacing) - 5 # right-align
+
+        points = []
+
+        for i in range(mora_count):
+            mora_num = i + 1
+            is_high = False
+
+            if self.pitch_drop == 0:        # heiban -> low, high, high, ...
+                is_high = (mora_num > 1)
+            elif self.pitch_drop == 1:      # atamadaka -> high, low, low, ...
+                is_high = (mora_num == 1)
+            else:                           # nakadaka/odaka -> high, high, ....
+                if mora_num == 1:
+                    is_high = False
+                elif mora_num <= self.pitch_drop:
+                    is_high = True
+                else:
+                    is_high = False
+
+            y = high_y if is_high else low_y
+            x = start_x + (i * spacing)
+            points.append(QPoint(x, y))
+
+        pen = QPen(QColor(255, 255, 255))
+        pen.setWidth(2)
+        painter.setPen(pen)
+
+        for i in range(len(points) - 1):
+            painter.drawLine(points[i], points[i+1])
+
+        painter.setBrush(QColor(20, 20, 25))
+        for p in points:
+            painter.drawEllipse(p, radius, radius)
 
 # --- SNIPPING CAMERA ---
 class SnippingWidget(QWidget):

@@ -2,7 +2,7 @@ from manga_ocr import MangaOcr
 from janome.tokenizer import Tokenizer
 from PIL import Image, ImageOps
 
-print("Booting up X-Ray Lens... (Loading AI models)")
+print("Booting up Simple JP Reader...")
 mocr = MangaOcr()
 tokenizer = Tokenizer()
 

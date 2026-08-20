@@ -8,10 +8,12 @@ venv/
 
 # Offline Dictionaries
 src/dictionaries/
-dictionaries
+dictionaries/
+default_zips/
 
 # Ignore test pics
 *.png
 
 src/dictionary.db
 dictionary.db
+*.db

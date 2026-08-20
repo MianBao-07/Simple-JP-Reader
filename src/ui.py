@@ -1,16 +1,24 @@
 from PyQt6.QtWidgets import (QApplication, QWidget, QPushButton, QHBoxLayout, 
                              QVBoxLayout, QLabel, QRubberBand, QScrollArea, 
-                             QFrame, QSizeGrip, QLineEdit)
+                             QFrame, QSizeGrip, QLineEdit, QFormLayout,
+                             QCheckBox, QComboBox)
 from PyQt6.QtCore import Qt, QRect, QPoint, QTimer, pyqtSignal, QObject
 from PyQt6.QtGui import QGuiApplication, QPainter, QPen, QColor, QBrush
 
 from dictionary import get_real_data
-from model import extract_words
+from model import extract_words, tokenize_sentence
+from translation import translate_text
+from ai_fix import fix_japanese_ocr
 
 USER_SETTINGS = {
     "show_pitch": True,
     "show_freq": True,
-    "show_meaning": True
+    "show_meaning": True,
+    "enable_translation": True,
+    "translation_engine": "google", 
+    "deepl_api_key": "",
+    "enable_ai_fix": True,
+    "gemini_api_key": "",
 }
 
 class SignalManager(QObject):
@@ -217,7 +225,7 @@ class EditableWord(QLineEdit):
 
     def adjust_width(self, text):
         metrics = self.fontMetrics()
-        width = metrics.horizontalAdvance(text) + 50
+        width = metrics.horizontalAdvance(text) + 30
         self.setFixedWidth(width)
 
 # --- VERTICAL OVERLAY (INFO BOX) ---
@@ -237,14 +245,15 @@ class ResultOverlay(QWidget):
             }
         """)
         
-        self.setFixedWidth(320)
+        # self.setFixedWidth(320)
         # self.setMaximumHeight(450)
-
         self.layout = QVBoxLayout()
         # self.layout.setContentsMargins(0, 0, 0, 0)
         self.setLayout(self.layout)
 
         self.top_bar = QHBoxLayout()
+        self.top_bar.addStretch()
+
         self.btn_close = QPushButton("X")
         self.btn_close.setFixedSize(20, 20)
         self.btn_close.setStyleSheet("color: white; border-radius: 10px; font-weight: bold; border: none;") # red circle -> background: #EF4444; 
@@ -258,6 +267,12 @@ class ResultOverlay(QWidget):
         self.lbl_sentence.setStyleSheet("font-size: 16px; color: #60A5FA; font-weight: bold; border: none;")
         self.lbl_sentence.setWordWrap(True)
         self.layout.addWidget(self.lbl_sentence)
+
+        self.lbl_translation = QLabel()
+        self.lbl_translation.setStyleSheet("font-size: 14px; color: #34D399; font-style: italic; border: none; margin-top: 2px;")
+        self.lbl_translation.setWordWrap(True)
+        self.lbl_translation.hide()
+        self.layout.addWidget(self.lbl_translation)
 
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
@@ -280,10 +295,30 @@ class ResultOverlay(QWidget):
         self.grip_layout = QHBoxLayout()
         self.grip_layout.setContentsMargins(0, 0, 0, 0)
         self.grip_layout.addStretch()
+
+        self.btn_ai_fix = QPushButton("✨")
+        self.btn_ai_fix.setFixedSize(45, 20)
+        self.btn_ai_fix.setStyleSheet("background: transparent; color: #FBBF24; font-weight: bold; font-size: 13px; border: none;")
+        self.btn_ai_fix.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_ai_fix.clicked.connect(self.run_ai_fix)
+        self.grip_layout.addWidget(self.btn_ai_fix, 0, Qt.AlignmentFlag.AlignBottom)
+
+        # Removed the static hide() check for AI Fix here!
+
+        self.btn_translate = QPushButton("Aあ")
+        self.btn_translate.setFixedSize(30, 20)
+        self.btn_translate.setStyleSheet("background: transparent; color: #9CA3AF; font-weight: bold; font-size: 14px; border: none;")
+        self.btn_translate.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_translate.clicked.connect(self.run_translation)
+        self.grip_layout.addWidget(self.btn_translate, 0, Qt.AlignmentFlag.AlignBottom)
+
+        # Removed the static hide() check for Translation here!
+
+        self.grip_layout.addStretch()
+
         self.size_grip = QSizeGrip(self)
         self.grip_layout.addWidget(self.size_grip, 0, Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignRight)
         self.layout.addLayout(self.grip_layout)
-
 
         self._is_dragging = False
         self._drag_start_position = QPoint()
@@ -291,7 +326,69 @@ class ResultOverlay(QWidget):
         signals.show_results.connect(self.display_words)
         signals.word_edited.connect(self.rebuild_sentence)
 
+    def run_ai_fix(self):
+        full_text = self.lbl_sentence.text().strip()
+        if not full_text:
+            return
+
+        self.lbl_sentence.setText("✨...")
+        self.lbl_sentence.setStyleSheet("font-size: 16px; color: #FBBF24; font-weight: bold; border: none; font-style: italic;")
+        QApplication.processEvents()
+
+        api_key = USER_SETTINGS.get("gemini_api_key", "")
+        fixed_text = fix_japanese_ocr("temp_snip.png", full_text, api_key=api_key)
+        
+        self.lbl_sentence.setText(fixed_text)
+        self.lbl_sentence.setStyleSheet("font-size: 16px; color: #60A5FA; font-weight: bold; border: none;")
+
+        for i in reversed(range(self.scroll_layout.count())):
+            widget = self.scroll_layout.itemAt(i).widget()
+            if widget:
+                widget.setParent(None)
+
+        new_tokens = tokenize_sentence(fixed_text)
+        for token_info in new_tokens:
+            if token_info["surface"].strip():
+                item = ExpandableWordWidget(token_info)
+                self.scroll_layout.addWidget(item)
+
+        signals.update_history.emit(fixed_text)
+
+        if not self.lbl_translation.isHidden():
+            self.run_translation()
+
+        self.adjustSize()
+
+    def run_translation(self):
+        full_text = self.lbl_sentence.text().strip()
+        if not full_text:
+            return
+
+        self.lbl_translation.setText("Translating...")
+        self.lbl_translation.show()
+        QApplication.processEvents()
+
+        engine = USER_SETTINGS.get("translation_engine", "google")
+        api_key = USER_SETTINGS.get("deepl_api_key", "")
+
+        # --- FIX: Pass the dynamic engine and API key to the translation function ---
+        english_text = translate_text(full_text, engine=engine, api_key=api_key)
+
+        self.lbl_translation.setText(english_text)
+        self.adjustSize()
+
     def display_words(self, token_list, x, y):
+        # --- FIX: Dynamically check the settings every time we display the box ---
+        if USER_SETTINGS.get("enable_ai_fix", True):
+            self.btn_ai_fix.show()
+        else:
+            self.btn_ai_fix.hide()
+            
+        if USER_SETTINGS.get("enable_translation", True):
+            self.btn_translate.show()
+        else:
+            self.btn_translate.hide()
+
         for i in reversed(range(self.scroll_layout.count())): 
             widget = self.scroll_layout.itemAt(i).widget()
             if widget:
@@ -299,6 +396,8 @@ class ResultOverlay(QWidget):
 
         full_text = "".join([t["surface"] for t in token_list])
         self.lbl_sentence.setText(full_text)
+
+        self.lbl_translation.hide()
 
         for token_info in token_list:
             if token_info["surface"].strip(): 
@@ -455,6 +554,8 @@ class SnippingWidget(QWidget):
             sct_img = sct.grab(region)
             img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
             
+            img.save("temp_snip.png")
+
             token_list = extract_words(img)
             
             if token_list:

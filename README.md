@@ -12,7 +12,7 @@ After experimenting a handful of Japanese-learning apps myself, I have dedicated
 * **Live Dictionary Lookups:** Hooks directly into the Jisho.org API to pull definitions, readings, and word frequencies.
 * **Click-to-Copy History:** A dedicated history tab logs your snips. Click any sentence to instantly copy it to your clipboard.
 
-## roadmap / ideas
+## roadmap / ideas (to-be-updated, too lazy rn)
 
 - [ ] **Offline Dictionaries:** Support for Yomitan/Yomichan structured JSON dictionaries (Jitendex, JPDBv2, JMnedict) for instant, lag-free lookups. Works but really buggy.
 - [ ] **Anki Integration:** One-click flashcard creation sending the base form, contextual sentence, and definition straight to an Anki deck.
@@ -38,6 +38,14 @@ python src/main.py
 * **Escape (While Snipping):** Cancel snip
 
 ## changelog
+
+- 8/20:
+  - Added AI Translation using google translate, will add more models like DeepL
+  - Added AI Fix using gemini-3.6-flash, fix wrong sentences using AI, will add more models later
+  - Programmed functional options to enable AI Fix and AI Translation
+  - Added feature to import local yomitan dictionaries
+  - Added feature to install, uninstall and enable any dictionaries of your choice
+  - Filter dictionaries by adding tags of [Kanji], [Term], & [Frequency] in the folder name
 
 - 8/18: Added Non-Functional Settings and improved QOL
   - Workspace is now resizeable

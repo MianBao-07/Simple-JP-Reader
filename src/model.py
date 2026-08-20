@@ -6,6 +6,24 @@ print("Booting up Simple JP Reader...")
 mocr = MangaOcr()
 tokenizer = Tokenizer()
 
+def tokenize_sentence(text):
+    """Reusable helper: Tokenizes any Japanese string into structured word data."""
+    tokens = tokenizer.tokenize(text)
+    word_data = []
+    
+    for token in tokens:
+        surface = token.surface
+        # If Janome cannot determine a base form, it returns '*'
+        base_form = token.base_form if token.base_form != '*' else surface
+        
+        word_data.append({
+            "surface": surface,
+            "base_form": base_form,
+            "pos": token.part_of_speech.split(',')[0] 
+        })
+        
+    return word_data
+
 def extract_words(img):
     print("Processing via AI...")
     
@@ -22,20 +40,5 @@ def extract_words(img):
     text = mocr(img)
     print(f"Raw OCR Output: {text}")
     
-    # 4. Tokenization & Lemmatization
-    tokens = tokenizer.tokenize(text)
-    
-    word_data = []
-    for token in tokens:
-        surface = token.surface
-        # If Janome cannot determine a base form, it returns '*'
-        base_form = token.base_form if token.base_form != '*' else surface
-        
-        # --- NEW: Returning a dictionary instead of a plain string ---
-        word_data.append({
-            "surface": surface,
-            "base_form": base_form,
-            "pos": token.part_of_speech.split(',')[0] 
-        })
-        
-    return word_data
+    # 4. Tokenize using the shared helper (No duplicated code!)
+    return tokenize_sentence(text)

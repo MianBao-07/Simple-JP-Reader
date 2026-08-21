@@ -46,6 +46,7 @@ python src/main.py
   - Added feature to import local yomitan dictionaries
   - Added feature to install, uninstall and enable any dictionaries of your choice
   - Filter dictionaries by adding tags of [Kanji], [Term], & [Frequency] in the folder name
+  - Removed pre-installed dictionaries
 
 - 8/18: Added Non-Functional Settings and improved QOL
   - Workspace is now resizeable

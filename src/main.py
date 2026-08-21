@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                              QFileDialog)
 from PyQt6.QtCore import Qt, QTimer, QEvent, QThread, pyqtSignal
 
-from ui import ResultOverlay, SnippingWidget, signals, USER_SETTINGS
+from ui import ResultOverlay, SnippingWidget, signals, USER_SETTINGS, save_settings_disk
 from dictionary import set_dictionary_enabled
 
 class DictInstallWorker(QThread):
@@ -256,45 +256,35 @@ class ControlPanel(QWidget):
         self.btn_import_dict.clicked.connect(self.import_local_dictionary)
         content_layout.addWidget(self.btn_import_dict)
 
-        # --- Term Dictionaries ---
-        group_term = QGroupBox("Term Dictionaries")
-        self.l_term = QVBoxLayout() 
-        self.l_term.addWidget(DictionaryRow("Jitendex (Japanese-to-English)", 45.2, self.start_install, 
-                                            zip_path=os.path.join(os.getcwd(), "default_zips", "jitendex.zip")))
-        self.l_term.addWidget(DictionaryRow("JMnedict (Proper Names)", 12.8, self.start_install, 
-                                            zip_path=os.path.join(os.getcwd(), "default_zips", "jmnedict.zip")))
-        group_term.setLayout(self.l_term) 
-        content_layout.addWidget(group_term)
+        # --- Dynamic Category Groups (Hidden by Default) ---
+        self.group_term = QGroupBox("Term Dictionaries")
+        self.l_term = QVBoxLayout()
+        self.group_term.setLayout(self.l_term)
+        self.group_term.hide()
+        content_layout.addWidget(self.group_term)
 
-        # --- Kanji Dictionaries ---
-        group_kanji = QGroupBox("Kanji Dictionaries")
+        self.group_kanji = QGroupBox("Kanji Dictionaries")
         self.l_kanji = QVBoxLayout()
-        self.l_kanji.addWidget(DictionaryRow("KANJIDIC (Readings, Meanings)", 6.4, self.start_install, 
-                                             zip_path=os.path.join(os.getcwd(), "default_zips", "kanjidic.zip")))
-        group_kanji.setLayout(self.l_kanji)
-        content_layout.addWidget(group_kanji)
+        self.group_kanji.setLayout(self.l_kanji)
+        self.group_kanji.hide()
+        content_layout.addWidget(self.group_kanji)
 
-        # --- Pitch Accent Dictionaries ---
-        group_pitch = QGroupBox("Pitch Accent Dictionaries")
+        self.group_pitch = QGroupBox("Pitch Accent Dictionaries")
         self.l_pitch = QVBoxLayout()
-        self.l_pitch.addWidget(DictionaryRow("アクセント辞典v2 (Pitch Accent)", 4.2, self.start_install, 
-                                             zip_path=os.path.join(os.getcwd(), "default_zips", "アクセント辞典v2_pitch.zip")))
-        group_pitch.setLayout(self.l_pitch)
-        content_layout.addWidget(group_pitch)
+        self.group_pitch.setLayout(self.l_pitch)
+        self.group_pitch.hide()
+        content_layout.addWidget(self.group_pitch)
 
-        # --- Frequency Dictionaries ---
-        group_freq = QGroupBox("Frequency Dictionaries")
+        self.group_freq = QGroupBox("Frequency Dictionaries")
         self.l_freq = QVBoxLayout()
-        self.l_freq.addWidget(DictionaryRow("JPDBv2 (Anime / Visual Novels)", 2.1, self.start_install, 
-                                            zip_path=os.path.join(os.getcwd(), "default_zips", "jpdb_freq.zip")))
-        group_freq.setLayout(self.l_freq)
-        content_layout.addWidget(group_freq)
+        self.group_freq.setLayout(self.l_freq)
+        self.group_freq.hide()
+        content_layout.addWidget(self.group_freq)
         
-        # --- Hidden Fallback Group ---
-        self.group_imported = QGroupBox("Imported Dictionaries")
+        self.group_imported = QGroupBox("Other Dictionaries")
         self.l_imported = QVBoxLayout()
         self.group_imported.setLayout(self.l_imported)
-        self.group_imported.hide() 
+        self.group_imported.hide()
         content_layout.addWidget(self.group_imported)
 
         content_layout.addStretch()
@@ -329,10 +319,10 @@ class ControlPanel(QWidget):
         
         self.progress_container.hide() 
         self.dicts_layout.addWidget(self.progress_container)
+        
         self.scan_existing_dictionaries()
 
     def scan_existing_dictionaries(self):
-        """Scans the 'dictionaries' folder on startup and restores installed custom dictionaries to the UI."""
         dict_root = Path(os.getcwd()) / "dictionaries"
         if not dict_root.exists():
             return
@@ -343,50 +333,52 @@ class ControlPanel(QWidget):
             
             folder_name = sub_dir.name
             
-            # Calculate the total size of the extracted folder in MB
             try:
                 total_size_bytes = sum(f.stat().st_size for f in sub_dir.glob('**/*') if f.is_file())
                 file_size_mb = round(total_size_bytes / (1024 * 1024), 1)
             except Exception:
                 file_size_mb = 1.0
 
-            # Rebuild the dictionary row
             new_row = DictionaryRow(
                 folder_name,
                 file_size_mb,
                 self.start_install,
                 is_custom=True,
-                delete_callback=self.check_imported_group
+                delete_callback=self.check_group_visibility # Updated callback!
             )
             
-            # Instantly mark it as installed and enable its checkbox
             new_row.mark_as_installed()
 
-            name_lower = folder_name.lower() # or file_name.lower() in the import method
-            if "[term]" in name_lower:
-                self.l_term.addWidget(new_row)
-            elif "[kanji]" in name_lower:
-                self.l_kanji.addWidget(new_row)
-            elif "[pitch]" in name_lower or "[accent]" in name_lower:
-                self.l_pitch.addWidget(new_row)
-            elif "[freq]" in name_lower or "[frequency]" in name_lower:
-                self.l_freq.addWidget(new_row)
-            else:
-                self.l_imported.addWidget(new_row)
-                self.group_imported.show()
+            name_lower = folder_name.lower()
+            if "[term]" in name_lower: self.l_term.addWidget(new_row)
+            elif "[kanji]" in name_lower: self.l_kanji.addWidget(new_row)
+            elif "[pitch]" in name_lower or "[accent]" in name_lower: self.l_pitch.addWidget(new_row)
+            elif "[freq]" in name_lower or "[frequency]" in name_lower: self.l_freq.addWidget(new_row)
+            else: self.l_imported.addWidget(new_row)
+            
+        # Update visibility for all groups once the scan finishes
+        self.update_group_visibility()
 
-    def check_imported_group(self):
-        QTimer.singleShot(50, self.update_imported_visibility)
+    def check_group_visibility(self):
+        QTimer.singleShot(50, self.update_group_visibility)
 
-    def update_imported_visibility(self):
-        has_items = False
-        for i in range(self.l_imported.count()):
-            widget = self.l_imported.itemAt(i).widget()
-            if isinstance(widget, DictionaryRow):
-                has_items = True
-                break
-        if not has_items:
-            self.group_imported.hide()
+    def update_group_visibility(self):
+        groups = [
+            (self.group_term, self.l_term),
+            (self.group_kanji, self.l_kanji),
+            (self.group_pitch, self.l_pitch),
+            (self.group_freq, self.l_freq),
+            (self.group_imported, self.l_imported)
+        ]
+        
+        for group, layout in groups:
+            has_items = False
+            for i in range(layout.count()):
+                widget = layout.itemAt(i).widget()
+                if isinstance(widget, DictionaryRow):
+                    has_items = True
+                    break
+            group.setVisible(has_items)
 
     def import_local_dictionary(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Select Yomitan Dictionary Zip", "", "Zip Files (*.zip)")
@@ -400,24 +392,21 @@ class ControlPanel(QWidget):
         new_row = DictionaryRow(
             f"{file_name}", 
             file_size_mb, 
-            self.start_install, # Updated callback name
+            self.start_install,
             is_custom=True, 
-            delete_callback=self.check_imported_group,
+            delete_callback=self.check_group_visibility, # Updated callback!
             zip_path=file_path
         )
         
-        name_lower = folder_name.lower() 
-        if "[term]" in name_lower:
-            self.l_term.addWidget(new_row)
-        elif "[kanji]" in name_lower:
-            self.l_kanji.addWidget(new_row)
-        elif "[pitch]" in name_lower or "[accent]" in name_lower:
-            self.l_pitch.addWidget(new_row)
-        elif "[freq]" in name_lower or "[frequency]" in name_lower:
-            self.l_freq.addWidget(new_row)
-        else:
-            self.l_imported.addWidget(new_row)
-            self.group_imported.show()
+        name_lower = file_name.lower()
+        if "[term]" in name_lower: self.l_term.addWidget(new_row)
+        elif "[kanji]" in name_lower: self.l_kanji.addWidget(new_row)
+        elif "[pitch]" in name_lower or "[accent]" in name_lower: self.l_pitch.addWidget(new_row)
+        elif "[freq]" in name_lower or "[frequency]" in name_lower: self.l_freq.addWidget(new_row)
+        else: self.l_imported.addWidget(new_row)
+        
+        # Instantly reveal the category group if it was previously hidden
+        self.update_group_visibility()
 
     # --- EXTRACTION LOGIC ---
     def start_install(self, row_widget):
@@ -598,6 +587,8 @@ class ControlPanel(QWidget):
         engine_text = self.combo_trans_engine.currentText()
         USER_SETTINGS["translation_engine"] = "deepl" if "DeepL" in engine_text else "google"
         USER_SETTINGS["deepl_api_key"] = self.input_api_key.text().strip()
+
+        save_settings_disk()
 
         self.btn_save_settings.setText("Settings Saved.")
         self.btn_save_settings.setStyleSheet("background-color: #10B981; color: white; font-weight: bold; padding: 10px; border-radius: 5px;")

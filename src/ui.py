@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import (QApplication, QWidget, QPushButton, QHBoxLayout,
                              QVBoxLayout, QLabel, QRubberBand, QScrollArea, 
                              QFrame, QSizeGrip, QLineEdit, QFormLayout,
                              QCheckBox, QComboBox)
-from PyQt6.QtCore import Qt, QRect, QPoint, QTimer, pyqtSignal, QObject
+from PyQt6.QtCore import Qt, QRect, QPoint, QTimer, pyqtSignal, QObject, QThread
 from PyQt6.QtGui import QGuiApplication, QPainter, QPen, QColor, QBrush
 
 from dictionary import get_real_data
@@ -10,16 +10,43 @@ from model import extract_words, tokenize_sentence
 from translation import translate_text
 from ai_fix import fix_japanese_ocr
 
-USER_SETTINGS = {
+import os
+import json
+
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
+
+DEFAULT_SETTINGS = {
     "show_pitch": True,
     "show_freq": True,
     "show_meaning": True,
     "enable_translation": True,
-    "translation_engine": "google", 
+    "translation_engine": "google",
     "deepl_api_key": "",
     "enable_ai_fix": True,
     "gemini_api_key": "",
 }
+
+def load_settings():
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+                loaded = json.load(f)
+                merged = DEFAULT_SETTINGS.copy()
+                merged.update(loaded) # will overwrite default with saved data
+                return merged
+        except Exception as e:
+            print(f"Error loading config: {e}")
+    return DEFAULT_SETTINGS.copy()
+
+def save_settings_disk():
+    try:
+        with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+            json.dump(USER_SETTINGS, f, indent=4)
+    except Exception as e:
+        print(f"Error saving config: {e}")
+
+USER_SETTINGS = load_settings()
+
 
 class SignalManager(QObject):
     trigger_snip = pyqtSignal()
@@ -28,6 +55,21 @@ class SignalManager(QObject):
     word_edited = pyqtSignal()
 
 signals = SignalManager()
+
+class OCRWorker(QThread):
+    finished = pyqtSignal(list)
+    error = pyqtSignal(str)
+
+    def __init__(self, img):
+        super().__init__()
+        self.img = img
+
+    def run(self):
+        try:
+            token_list = extract_words(self.img)
+            self.finished.emit(token_list)
+        except Exception as e:
+            self.error.emit(str(e))
 
 # --- EXPANDABLE WORD COMPONENT ---
 class ExpandableWordWidget(QWidget):
@@ -556,9 +598,14 @@ class SnippingWidget(QWidget):
             
             img.save("temp_snip.png")
 
-            token_list = extract_words(img)
-            
-            if token_list:
-                signals.show_results.emit(token_list, int(x), int(y))
-                full_text = "".join([t["surface"] for t in token_list])
-                signals.update_history.emit(full_text)
+            self.ocr_thread = OCRWorker(img)
+            self.ocr_thread.finished.connect(lambda tokens: self.on_ocr_complete(tokens, int(x), int(y)))
+
+            self.ocr_thread.error.connect(lambda e: print(f"\n[CRASH LOG] OCR Failed: {e}\n"))
+            self.ocr_thread.start()
+
+    def on_ocr_complete(self, token_list, x, y):
+        if token_list:
+            signals.show_results.emit(token_list, x, y)
+            full_text = "". join([t["surface"] for t in token_list])
+            signals.update_history.emit(full_text)

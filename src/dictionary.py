@@ -43,6 +43,12 @@ def init_local_dictionaries_to_db():
             term TEXT, reading TEXT, dict_name TEXT, freq_value TEXT
         )
     """)
+    
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_words_term ON words(term)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_meta_pitch_term ON meta_pitch(term)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_meta_freq_term ON meta_freq(term)")
+
+    conn.commit()
     conn.commit()
 
     for sub_dir in dict_root.iterdir():

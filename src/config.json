@@ -1,0 +1,10 @@
+{
+    "show_pitch": true,
+    "show_freq": true,
+    "show_meaning": true,
+    "enable_translation": true,
+    "translation_engine": "google",
+    "deepl_api_key": "",
+    "enable_ai_fix": true,
+    "gemini_api_key": ""
+}

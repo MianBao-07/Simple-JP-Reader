@@ -62,7 +62,6 @@ class DictionaryRow(QWidget):
         
         self.checkbox = QCheckBox(name)
         self.checkbox.setEnabled(False) 
-        # --- NEW: Hook up checkbox toggle to dictionary engine ---
         self.checkbox.toggled.connect(self.on_checkbox_toggled)
         
         layout.addWidget(self.checkbox)
@@ -344,7 +343,7 @@ class ControlPanel(QWidget):
                 file_size_mb,
                 self.start_install,
                 is_custom=True,
-                delete_callback=self.check_group_visibility # Updated callback!
+                delete_callback=self.check_group_visibility
             )
             
             new_row.mark_as_installed()
@@ -437,7 +436,7 @@ class ControlPanel(QWidget):
             # Fallback mock timer for the hardcoded built-in dictionaries
             self.current_mb = 0.0
             self.dl_timer = QTimer()
-            self.dl_timer.timeout.connect(self.animate_download) # Keep your old animate_download method around for these!
+            self.dl_timer.timeout.connect(self.animate_download)
             self.dl_timer.start(50) 
 
     def update_install_progress(self, percent, current_mb):
@@ -608,10 +607,24 @@ class ControlPanel(QWidget):
         self.keyboard_listener.stop() 
         QApplication.quit()           
 
+# --- KEY DETECTION ---
+modifier_state = {
+    "ctrl_held": False
+}
 
 def on_press(key):
+    if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
+        modifier_state["ctrl_held"] = True
+
     if key == keyboard.Key.alt_l:
-        signals.trigger_snip.emit()
+        if modifier_state["ctrl_held"]:
+            signals.trigger_manual_snip.emit()
+        else:
+            signals.trigger_quick_snip.emit()
+
+def on_release(key):
+    if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
+        modifier_state["ctrl_held"] = False
 
     
 if __name__ == '__main__':
@@ -621,7 +634,7 @@ if __name__ == '__main__':
     result_ui = ResultOverlay()
     snip_ui = SnippingWidget()
     
-    listener = keyboard.Listener(on_press=on_press)
+    listener = keyboard.Listener(on_press=on_press, on_release=on_release)
     listener.start()
     
     main_window = ControlPanel(listener)

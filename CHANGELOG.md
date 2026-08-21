@@ -1,8 +1,8 @@
-\## changelog
+changelog
 
 
 
-\- 8/21:
+8/21:
 
 &#x20; - added B-tree indexes to dict database
 
@@ -12,9 +12,11 @@
 
 &#x20; - overhauled preprocessing (PIL -> OpenCV) (CLAHE) (Bilateral Filtering) etc. etc.
 
+&#x20; - added dual-mode snipping -> manual adjust, you can freely adjust the shape of snip
 
 
-\- 8/20:
+
+8/20:
 
 &#x20; - Added AI Translation using google translate, will add more models like DeepL
 
@@ -32,7 +34,7 @@
 
 
 
-\- 8/18: Added Non-Functional Settings and improved QOL
+8/18: Added Non-Functional Settings and improved QOL
 
 &#x20; - Workspace is now resizeable
 

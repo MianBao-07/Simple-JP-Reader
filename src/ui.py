@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import (QApplication, QWidget, QPushButton, QHBoxLayout,
                              QFrame, QSizeGrip, QLineEdit, QFormLayout,
                              QCheckBox, QComboBox)
 from PyQt6.QtCore import Qt, QRect, QPoint, QTimer, pyqtSignal, QObject, QThread
-from PyQt6.QtGui import QGuiApplication, QPainter, QPen, QColor, QBrush
+from PyQt6.QtGui import QGuiApplication, QPainter, QPen, QColor, QBrush, QPolygon
 
 from dictionary import get_real_data
 from model import extract_words, tokenize_sentence
@@ -12,6 +12,8 @@ from ai_fix import fix_japanese_ocr
 
 import os
 import json
+import cv2
+import numpy as np
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
 
@@ -49,7 +51,8 @@ USER_SETTINGS = load_settings()
 
 
 class SignalManager(QObject):
-    trigger_snip = pyqtSignal()
+    trigger_quick_snip = pyqtSignal()
+    trigger_manual_snip = pyqtSignal()
     show_results = pyqtSignal(list, int, int)
     update_history = pyqtSignal(str) 
     word_edited = pyqtSignal()
@@ -557,50 +560,183 @@ class SnippingWidget(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
-        self.setStyleSheet("background-color: black;")
-        self.setWindowOpacity(0.4)
-        self.setCursor(Qt.CursorShape.CrossCursor)
-        
-        self.rubberBand = QRubberBand(QRubberBand.Shape.Rectangle, self)
-        self.origin = QPoint()
-        
-        signals.trigger_snip.connect(self.start_snipping)
 
-    def start_snipping(self):
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setCursor(Qt.CursorShape.CrossCursor)
+
+        self.is_manual_mode = False
+        self.state = "HIDDEN" # hidden, dragging, adjusting
+
+        self.start_point = QPoint()
+        self.end_point = QPoint()
+        self.polygon = QPolygon()
+        self.active_corner_index = None
+
+        signals.trigger_quick_snip.connect(lambda: self.start_snipping(is_manual=False))
+        signals.trigger_manual_snip.connect(lambda: self.start_snipping(is_manual=True))
+
+    def start_snipping(self, is_manual):
+        self.is_manual_mode = is_manual
+        self.state = "IDLE"
+        self.polygon.clear()
+
         screen_geometry = QGuiApplication.primaryScreen().geometry()
         self.setGeometry(screen_geometry)
         self.show()
+        self.update() # force a repaint
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            self.origin = event.position().toPoint()
-            self.rubberBand.setGeometry(QRect(self.origin, self.origin))
-            self.rubberBand.show()
+            click_pos = event.position().toPoint()
+
+            if self.state == "ADJUSTING":
+                for i in range(self.polygon.count()):
+                    if (self.polygon.at(i) - click_pos).manhattanLength() < 15:
+                        self.active_corner_index = i
+                        return
+
+                self.state = "DRAGGING"
+                self.start_point = click_pos
+                self.end_point = self.start_point
+                self.update()
+
+            elif self.state == "IDLE":
+                self.state = "DRAGGING"
+                self.start_point = click_pos
+                self.end_point = self.start_point
+                self.update()
 
     def mouseMoveEvent(self, event):
-        self.rubberBand.setGeometry(QRect(self.origin, event.position().toPoint()).normalized())
+        if self.state == "ADJUSTING" and self.active_corner_index is not None:
+            self.polygon.replace(self.active_corner_index, event.position().toPoint())
+            self.update()
+
+        elif self.state == "DRAGGING":
+            self.end_point = event.position().toPoint()
+            self.update()
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            self.hide()
-            rect = QRect(self.origin, event.position().toPoint()).normalized()
-            mouse_x = event.position().toPoint().x()
-            mouse_y = event.position().toPoint().y()
-            QTimer.singleShot(100, lambda: self.process_image(rect, mouse_x, mouse_y))
+            if self.state == "ADJUSTING":
+                self.active_corner_index = None
+                
+            elif self.state == "DRAGGING":
+                self.end_point = event.position().toPoint()
+                
+                if not self.is_manual_mode:
+                    # --- QUICK SNIP MODE ---
+                    self.state = "HIDDEN"
+                    self.hide()
+                    rect = QRect(self.start_point, self.end_point).normalized()
+                    poly = QPolygon([rect.topLeft(), rect.topRight(), rect.bottomRight(), rect.bottomLeft()])
+                    
+                    mouse_x = event.position().toPoint().x()
+                    mouse_y = event.position().toPoint().y()
+                    QTimer.singleShot(100, lambda: self.process_image(poly, mouse_x, mouse_y))
+                else:
+                    # --- MANUAL ADJUSTMENT MODE ---
+                    self.state = "ADJUSTING"
+                    rect = QRect(self.start_point, self.end_point).normalized()
+                    self.polygon = QPolygon([rect.topLeft(), rect.topRight(), rect.bottomRight(), rect.bottomLeft()])
+                    self.update()
 
-    def process_image(self, rect, x, y):
-        region = {"top": rect.top(), "left": rect.left(), "width": rect.width(), "height": rect.height()}
+    def keyPressEvent(self, event):
+        if self.state == "ADJUSTING":
+            if event.key() == Qt.Key.Key_Return or event.key() == Qt.Key.Key_Enter:
+                self.state = "HIDDEN"
+                self.hide()
+                
+                rect = self.polygon.boundingRect()
+                poly_copy = QPolygon(self.polygon)
+                
+                QTimer.singleShot(100, lambda: self.process_image(poly_copy, rect.x(), rect.y()))
+                
+            elif event.key() == Qt.Key.Key_Escape:
+                self.state = "HIDDEN"
+                self.hide()
+
+    def paintEvent(self, event):
+        if self.state == "HIDDEN":
+            returnPressed
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # screen dimming overlay
+        painter.fillRect(self.rect(), QColor(0, 0, 0 , 150))
+
+        # erase inside selection for transparency effect
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
+        if self.state == "DRAGGING":
+            rect = QRect(self.start_point, self.end_point).normalized()
+            painter.fillRect(rect, Qt.GlobalColor.transparent)
+        elif self.state == "ADJUSTING":
+            painter.drawPolygon(self.polygon)
+
+        # blue borders and grab handles
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+        pen = QPen(QColor(59, 130, 246))
+        pen.setWidth(2)
+        painter.setPen(pen)
+
+        if self.state == "DRAGGING":
+            painter.drawRect(QRect(self.start_point, self.end_point).normalized())
+        elif self.state == "ADJUSTING":
+            painter.drawPolygon(self.polygon)
+
+            painter.setBrush(QColor(59, 130, 246))
+            for i in range(self.polygon.count()):
+                painter.drawEllipse(self.polygon.at(i), 6, 6)
+
+    def process_image(self, polygon, x, y):
         import mss
         from PIL import Image
+        
+        # get  standard bounding box that surrounds custom angled shape
+        rect = polygon.boundingRect()
+        region = {"top": rect.top(), "left": rect.left(), "width": rect.width(), "height": rect.height()}
+        
         with mss.MSS() as sct:
             sct_img = sct.grab(region)
-            img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
             
-            img.save("temp_snip.png")
+            # Convert mss screen grab to OpenCV numpy array
+            img = np.array(sct_img)
+            img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR) # Drop the alpha channel
+            
+            pts = []
+            for i in range(4):
+                pt = polygon.at(i)
+                pts.append([pt.x() - rect.left(), pt.y() - rect.top()])
+            
+            src_pts = np.array(pts, dtype="float32")
+            
+            # maximum width and height calculation
+            width_top = np.linalg.norm(src_pts[0] - src_pts[1])
+            width_bottom = np.linalg.norm(src_pts[3] - src_pts[2])
+            max_width = max(int(width_top), int(width_bottom))
+            
+            height_left = np.linalg.norm(src_pts[0] - src_pts[3])
+            height_right = np.linalg.norm(src_pts[1] - src_pts[2])
+            max_height = max(int(height_left), int(height_right))
+            
+            # 4 corners of image
+            dst_pts = np.array([
+                [0, 0],
+                [max_width - 1, 0],
+                [max_width - 1, max_height - 1],
+                [0, max_height - 1]
+            ], dtype="float32")
+            
+            # matrix calc
+            matrix = cv2.getPerspectiveTransform(src_pts, dst_pts)
+            warped = cv2.warpPerspective(img, matrix, (max_width, max_height))
 
-            self.ocr_thread = OCRWorker(img)
+            final_img = Image.fromarray(cv2.cvtColor(warped, cv2.COLOR_BGR2RGB))
+            final_img.save("temp_snip.png") 
+
+            # Pass it to the background thread
+            self.ocr_thread = OCRWorker(final_img)
             self.ocr_thread.finished.connect(lambda tokens: self.on_ocr_complete(tokens, int(x), int(y)))
-
             self.ocr_thread.error.connect(lambda e: print(f"\n[CRASH LOG] OCR Failed: {e}\n"))
             self.ocr_thread.start()
 

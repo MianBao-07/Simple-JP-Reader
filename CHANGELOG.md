@@ -2,6 +2,14 @@ changelog
 
 
 
+8/24:
+
+&#x20; - snips now happen on a freeze-frame instead of live
+
+&#x20; - de-inflection is implemented, only for offline/installed dictionaries
+
+
+
 8/21:
 
 &#x20; - added B-tree indexes to dict database
@@ -34,7 +42,7 @@ changelog
 
 
 
-8/18: Added Non-Functional Settings and improved QOL
+8/18:
 
 &#x20; - Workspace is now resizeable
 

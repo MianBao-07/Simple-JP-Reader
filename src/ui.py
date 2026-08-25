@@ -3,29 +3,41 @@ from PyQt6.QtWidgets import (QApplication, QWidget, QPushButton, QHBoxLayout,
                              QFrame, QSizeGrip, QLineEdit, QFormLayout,
                              QCheckBox, QComboBox)
 from PyQt6.QtCore import Qt, QRect, QPoint, QTimer, pyqtSignal, QObject, QThread
-from PyQt6.QtGui import QGuiApplication, QPainter, QPen, QColor, QBrush, QPolygon
+from PyQt6.QtGui import (QGuiApplication, QPainter, QPen, QColor, QBrush, QPolygon, 
+                         QPolygonF, QPixmap, QImage, QPainterPath)
 
 from dictionary import get_real_data
 from model import extract_words, tokenize_sentence
 from translation import translate_text
 from ai_fix import fix_japanese_ocr
+from anki_export import add_anki_card
 
 import os
 import json
 import cv2
 import numpy as np
-
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
 
 DEFAULT_SETTINGS = {
     "show_pitch": True,
     "show_freq": True,
+    "show_jlpt": True,
     "show_meaning": True,
     "enable_translation": True,
     "translation_engine": "google",
     "deepl_api_key": "",
+    "nvidia_api_key": "",
+    "ai_engine": "google",
+    "global_api_key": "",
+    "local_base_url": "http://localhost:11434/v1",
+    "vision_model": "meta/llama-3.2-90b-vision-instruct",
+    "text_model": "meta/llama-3.1-70b-instruct",
     "enable_ai_fix": True,
     "gemini_api_key": "",
+    "anki_deck": "Default",
+    "anki_model": "Basic",
+    "anki_field_map": {},
+    "anki_custom_css": ".sjr-dictionary ul {\n    list-style-type: none;\n    padding-left: 0;\n    margin: 0;\n}\n.sjr-dictionary li {\n    margin-bottom: 4px;\n}\n.sjr-dictionary b {\n    color: #3B82F6;\n}",
 }
 
 def load_settings():
@@ -48,7 +60,6 @@ def save_settings_disk():
         print(f"Error saving config: {e}")
 
 USER_SETTINGS = load_settings()
-
 
 class SignalManager(QObject):
     trigger_quick_snip = pyqtSignal()
@@ -86,7 +97,6 @@ class ExpandableWordWidget(QWidget):
         self.layout.setContentsMargins(0, 5, 0, 5)
         self.setLayout(self.layout)
 
-        # 1. Header (Shows surface form, with lemma indicator if conjugated)
         self.header_widget = QWidget()
         self.header_layout = QHBoxLayout(self.header_widget)
         self.header_layout.setContentsMargins(0, 0, 0, 0)
@@ -96,7 +106,6 @@ class ExpandableWordWidget(QWidget):
         
         self.edit_word.returnPressed.connect(self.update_word)
 
-        # Handle the lemma (dictionary form) if it's conjugated
         self.lbl_lemma = None
         if self.surface != self.base_form:
             self.lbl_lemma = QLabel(f"({self.base_form})")
@@ -108,6 +117,32 @@ class ExpandableWordWidget(QWidget):
         self.pitch_graph = PitchGraphWidget("", pitch_drop=-1)
         self.header_layout.addWidget(self.pitch_graph)
 
+        self.btn_anki = QPushButton("+")
+        self.btn_anki.setFixedSize(24, 24)
+        self.btn_anki.setToolTip("Export card to Anki")
+        self.btn_anki.setStyleSheet("""
+            QPushButton { 
+                background-color: rgba(59, 130, 246, 0.2); 
+                color: #60A5FA; 
+                font-weight: bold; 
+                font-size: 16px; 
+                border-radius: 4px; 
+                border: 1px solid #3B82F6;
+                padding: 0px 0px 6px 1px;
+                text-align: center; 
+            }
+            QPushButton:hover { 
+                background-color: #3B82F6; 
+                color: white; 
+            }
+        """)
+        self.btn_anki.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_anki.clicked.connect(self.export_to_anki)
+        self.header_layout.addWidget(self.btn_anki)
+
+        self.btn_toggle = QPushButton("v")
+        self.btn_toggle.setFixedSize(24, 24)
+
         self.btn_toggle = QPushButton("v")
         self.btn_toggle.setFixedSize(24, 24)
         self.btn_toggle.setStyleSheet("background: transparent; color: #9CA3AF; font-weight: bold; font-size: 16px; border: none;")
@@ -118,7 +153,6 @@ class ExpandableWordWidget(QWidget):
         
         self.layout.addWidget(self.header_widget)
 
-        # 2. Hidden Content Area
         self.content_widget = QWidget()
         self.content_layout = QVBoxLayout(self.content_widget)
         self.content_layout.setContentsMargins(15, 0, 0, 10)
@@ -130,13 +164,83 @@ class ExpandableWordWidget(QWidget):
         self.content_widget.hide()
         self.layout.addWidget(self.content_widget)
 
-        # 3. Separator Line
         self.sep = QFrame()
         self.sep.setFrameShape(QFrame.Shape.HLine)
         self.sep.setStyleSheet("background-color: rgba(255, 255, 255, 30);")
         self.layout.addWidget(self.sep)
 
         self.fetch_data()
+
+    def export_to_anki(self):
+        import re
+
+        if not self.data_fetched:
+            self.fetch_data()
+
+        overlay = self.window()
+        sentence_context = overlay.lbl_sentence.text() if hasattr(overlay, 'lbl_sentence') else ""
+        
+        data = get_real_data(self.base_form, fallback_term=self.surface)
+        reading = data.get("pitch", self.surface)
+        
+        definition_html = ""
+        if "meanings_list" in data and data["meanings_list"]:
+            for entry in data["meanings_list"]:
+                definition_html += f"<b>[{entry['dict_name']}]</b><br>{entry['html_content']}<br>"
+        else:
+            definition_html = data.get("meaning", "No definition")
+
+        clean_html = re.sub(r'\s*style="[^"]*"', '', definition_html)
+        wrapped_html = f'<div class="sjr-dictionary">{clean_html}</div>'
+
+        custom_css = USER_SETTINGS.get("anki_custom_css", "")
+        if custom_css:
+            wrapped_html += f'<style>{custom_css}</style>'
+
+        deck = USER_SETTINGS.get("anki_deck", "Default")
+        model = USER_SETTINGS.get("anki_model", "Basic")
+        image_path = "temp_snip.png" if os.path.exists("temp_snip.png") else None
+        field_map = USER_SETTINGS.get("anki_field_map", {})
+
+        res = add_anki_card(
+            deck_name=deck,
+            model_name=model,
+            term=self.surface,
+            reading=reading,
+            definition=wrapped_html,
+            sentence=sentence_context,
+            image_path=image_path,
+            custom_map=field_map
+        )
+
+        if isinstance(res, dict) and "error" in res:
+            print(f"[Anki] Error: {res['error']}")
+            self.btn_anki.setText("✕")
+            self.btn_anki.setStyleSheet(
+                "background-color: rgba(239, 68, 68, 0.2); color: #EF4444; border: 1px solid #EF4444; padding: 0px 0px 2px 0px; text-align: center;")
+            QTimer.singleShot(2000, self.reset_anki_btn)
+        else:
+            print(f"[Anki] Successfully created card ID: {res}")
+            self.btn_anki.setText("✓")
+            self.btn_anki.setStyleSheet("background-color: rgba(16, 185, 129, 0.2); color: #10B981; border: 1px solid #10B981; padding: 0px 0px 2px 0px; text-align: center;")
+            QTimer.singleShot(2000, self.reset_anki_btn)
+
+    def reset_anki_btn(self):
+        self.btn_anki.setText("+")
+        self.btn_anki.setStyleSheet("""
+            QPushButton { 
+                background-color: rgba(59, 130, 246, 0.2); 
+                color: #60A5FA; 
+                font-weight: bold; 
+                font-size: 16px; 
+                border-radius: 4px; 
+                border: 1px solid #3B82F6; 
+            }
+            QPushButton:hover { 
+                background-color: #3B82F6; 
+                color: white; 
+            }
+        """)
 
     def update_word(self):
         new_text = self.edit_word.text().strip()
@@ -188,41 +292,66 @@ class ExpandableWordWidget(QWidget):
             self.btn_toggle.setText("v")
 
     def fetch_data(self):
-        # Query using the dictionary base form first, surface form as fallback
         data = get_real_data(self.base_form, fallback_term=self.surface)
-        self.lbl_loading.deleteLater()
+        if self.lbl_loading:
+            self.lbl_loading.deleteLater()
 
+        # pitch accent
         if hasattr(self, 'pitch_graph'):
-            real_pitch_drop = data.get("pitch_drop", 0)
-            actual_reading = data.get("pitch", self.base_form)
-            self.pitch_graph.update_pitch(actual_reading, real_pitch_drop)
+            if USER_SETTINGS.get("show_pitch", True):
+                real_pitch_drop = data.get("pitch_drop", -1)
+                actual_reading = data.get("pitch", self.base_form)
+                self.pitch_graph.update_pitch(actual_reading, real_pitch_drop)
+                self.pitch_graph.show()
+            else:
+                self.pitch_graph.hide()
 
-        meta_text = []
-        if USER_SETTINGS["show_pitch"]: meta_text.append(f"Reading: {data.get('pitch', '???')}")
-        if USER_SETTINGS["show_freq"]: meta_text.append(f"Freq: {data.get('freq', 'Unknown')}")
+        # grammar
+        grammar_path = data.get("grammar", [])
+        if grammar_path:
+            grammar_str = " + ".join(grammar_path)
+            lbl_grammar = QLabel(f"Grammar: {grammar_str}")
+            lbl_grammar.setStyleSheet("font-size: 13px; color: #FBBF24; margin-bottom: 2px;")
+            self.content_layout.addWidget(lbl_grammar)
 
-        if meta_text:
-            lbl_meta = QLabel(" • ".join(meta_text))
+        # metadata
+        meta_badges = []
+        
+        # text
+        reading_text = data.get('pitch', '').strip()
+        if reading_text and reading_text != "???":
+            meta_badges.append(f"Reading: {reading_text}")
+
+        # freq tag
+        if USER_SETTINGS.get("show_freq", True):
+            freq_val = data.get("freq")
+            if freq_val:
+                meta_badges.append(f"Freq: {freq_val}")
+
+        # jlpt tag
+        if USER_SETTINGS.get("show_jlpt", True):
+            jlpt_val = data.get("jlpt")
+            if jlpt_val:
+                meta_badges.append(f"JLPT: {jlpt_val}")
+
+        if meta_badges:
+            lbl_meta = QLabel(" • ".join(meta_badges))
             lbl_meta.setStyleSheet("font-size: 13px; color: #9CA3AF; margin-bottom: 5px;")
             self.content_layout.addWidget(lbl_meta)
 
-        if USER_SETTINGS["show_meaning"]:
-            # Handle the structured HTML list (Offline Dictionaries)
-            if "meanings_list" in data:
+        # dict def
+        if USER_SETTINGS.get("show_meaning", True):
+            if "meanings_list" in data and data["meanings_list"]:
                 for entry in data["meanings_list"]:
-                    # Create a styled header for the Dictionary Name
                     lbl_dict_name = QLabel(f"<b>[ {entry['dict_name']} ]</b>")
                     lbl_dict_name.setStyleSheet("color: #60A5FA; font-size: 12px; margin-top: 5px;")
                     self.content_layout.addWidget(lbl_dict_name)
 
-                    # Render the HTML content
                     lbl_mean = QLabel(entry['html_content'])
-                    lbl_mean.setTextFormat(Qt.TextFormat.RichText) # Force HTML rendering
+                    lbl_mean.setTextFormat(Qt.TextFormat.RichText)
                     lbl_mean.setStyleSheet("font-size: 14px; color: white;")
                     lbl_mean.setWordWrap(True)
                     self.content_layout.addWidget(lbl_mean)
-            
-            # --- FALLBACK: Handle plain text (Jisho.org API) ---
             elif "meaning" in data:
                 lbl_dict_name = QLabel("<b>[ Jisho API ]</b>")
                 lbl_dict_name.setStyleSheet("color: #34D399; font-size: 12px; margin-top: 5px;")
@@ -348,7 +477,6 @@ class ResultOverlay(QWidget):
         self.btn_ai_fix.clicked.connect(self.run_ai_fix)
         self.grip_layout.addWidget(self.btn_ai_fix, 0, Qt.AlignmentFlag.AlignBottom)
 
-        # Removed the static hide() check for AI Fix here!
 
         self.btn_translate = QPushButton("Aあ")
         self.btn_translate.setFixedSize(30, 20)
@@ -357,7 +485,6 @@ class ResultOverlay(QWidget):
         self.btn_translate.clicked.connect(self.run_translation)
         self.grip_layout.addWidget(self.btn_translate, 0, Qt.AlignmentFlag.AlignBottom)
 
-        # Removed the static hide() check for Translation here!
 
         self.grip_layout.addStretch()
 
@@ -414,16 +541,19 @@ class ResultOverlay(QWidget):
         QApplication.processEvents()
 
         engine = USER_SETTINGS.get("translation_engine", "google")
-        api_key = USER_SETTINGS.get("deepl_api_key", "")
+        if engine == "deepl":
+            api_key = USER_SETTINGS.get("deepl_api_key", "")
+        elif engine == "nvidia":
+            api_key = USER_SETTINGS.get("nvidia_api_key", "")
+        else:
+            api_key = ""
 
-        # --- FIX: Pass the dynamic engine and API key to the translation function ---
         english_text = translate_text(full_text, engine=engine, api_key=api_key)
 
         self.lbl_translation.setText(english_text)
         self.adjustSize()
 
     def display_words(self, token_list, x, y):
-        # --- FIX: Dynamically check the settings every time we display the box ---
         if USER_SETTINGS.get("enable_ai_fix", True):
             self.btn_ai_fix.show()
         else:
@@ -497,42 +627,50 @@ class ResultOverlay(QWidget):
 class PitchGraphWidget(QWidget):
     def __init__(self, word, pitch_drop):
         super().__init__()
-        self.word = word
-        self.pitch_drop = pitch_drop
-        self.setFixedSize(100, 24)
+        self.spacing = 12
+        self.update_pitch(word, pitch_drop)
 
     def update_pitch(self, new_word, new_pitch_drop):
-        self.word = new_word
+        self.word = new_word.split('・')[0].strip() if new_word else ""
         self.pitch_drop = new_pitch_drop
+        
+        if self.pitch_drop == -1:
+            self.setFixedSize(0, 24)
+        else:
+            small_kana = set("ゃゅょぁぃぅぇぉャュョァィゥェォ")
+            mora_count = max(1, sum(1 for c in self.word if c not in small_kana))
+            total_dots = mora_count + 1 if self.pitch_drop == 0 else mora_count
+            self.setFixedSize(total_dots * self.spacing + 10, 24)
+            
         self.update()
 
     def paintEvent(self, event):
         if self.pitch_drop == -1:
             return
+            
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # ignore small kana
         small_kana = set("ゃゅょぁぃぅぇぉャュョァィゥェォ")
         mora_count = max(1, sum(1 for c in self.word if c not in small_kana))
+        total_dots = mora_count + 1 if self.pitch_drop == 0 else mora_count
 
-        high_y = 4          # high
-        low_y = 16          # low
-        radius = 3          # size of dots
-        spacing = 12        # horizontal space between dots
-        start_x = self.width() - (mora_count * spacing) - 5 # right-align
+        high_y = 4
+        low_y = 16
+        radius = 3
+        start_x = 5
 
         points = []
 
-        for i in range(mora_count):
+        for i in range(total_dots):
             mora_num = i + 1
             is_high = False
 
-            if self.pitch_drop == 0:        # heiban -> low, high, high, ...
+            if self.pitch_drop == 0:        # Heiban: low, high, high... (particle high)
                 is_high = (mora_num > 1)
-            elif self.pitch_drop == 1:      # atamadaka -> high, low, low, ...
+            elif self.pitch_drop == 1:      # Atamadaka: high, low, low...
                 is_high = (mora_num == 1)
-            else:                           # nakadaka/odaka -> high, high, ....
+            else:                           # Nakadaka/Odaka
                 if mora_num == 1:
                     is_high = False
                 elif mora_num <= self.pitch_drop:
@@ -541,16 +679,18 @@ class PitchGraphWidget(QWidget):
                     is_high = False
 
             y = high_y if is_high else low_y
-            x = start_x + (i * spacing)
+            x = start_x + (i * self.spacing)
             points.append(QPoint(x, y))
 
-        pen = QPen(QColor(255, 255, 255))
+        # lines config
+        pen = QPen(QColor(96, 165, 250))
         pen.setWidth(2)
         painter.setPen(pen)
 
         for i in range(len(points) - 1):
             painter.drawLine(points[i], points[i+1])
 
+        # dots config
         painter.setBrush(QColor(20, 20, 25))
         for p in points:
             painter.drawEllipse(p, radius, radius)
@@ -579,6 +719,24 @@ class SnippingWidget(QWidget):
         self.is_manual_mode = is_manual
         self.state = "IDLE"
         self.polygon.clear()
+
+        import mss
+        with mss.MSS() as sct:
+            monitor = sct.monitors[1]
+            sct_img = sct.grab(monitor)
+
+            self.frozen_img_cv = np.array(sct_img)
+            self.frozen_img_cv = cv2.cvtColor(self.frozen_img_cv, cv2.COLOR_BGRA2BGR)
+
+        height, width, channel = self.frozen_img_cv.shape
+        bytes_per_line = 3 * width
+        q_img = QImage(self.frozen_img_cv.data, width, height, bytes_per_line, QImage.Format.Format_BGR888)
+        self.frozen_pixmap = QPixmap.fromImage(q_img)
+
+        screen_geometry = QGuiApplication.primaryScreen().geometry()
+        self.setGeometry(screen_geometry)
+        self.show()
+        self.update()
 
         screen_geometry = QGuiApplication.primaryScreen().geometry()
         self.setGeometry(screen_geometry)
@@ -657,21 +815,32 @@ class SnippingWidget(QWidget):
 
     def paintEvent(self, event):
         if self.state == "HIDDEN":
-            returnPressed
+            return
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # screen dimming overlay
-        painter.fillRect(self.rect(), QColor(0, 0, 0 , 150))
+        if hasattr(self, 'frozen_pixmap'):
+            painter.drawPixmap(self.rect(), self.frozen_pixmap)
 
-        # erase inside selection for transparency effect
-        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
+        painter.fillRect(self.rect(), QColor(0, 0, 0, 150))
+
         if self.state == "DRAGGING":
             rect = QRect(self.start_point, self.end_point).normalized()
-            painter.fillRect(rect, Qt.GlobalColor.transparent)
+            painter.drawPixmap(rect, self.frozen_pixmap, rect)
+
         elif self.state == "ADJUSTING":
-            painter.drawPolygon(self.polygon)
+            from PyQt6.QtCore import QPointF
+            path = QPainterPath()
+
+            poly_f = QPolygonF()
+            for i in range(self.polygon.count()):
+                poly_f.append(QPointF(self.polygon.at(i)))
+            path.addPolygon(poly_f)
+
+            painter.setClipPath(path)
+            painter.drawPixmap(self.rect(), self.frozen_pixmap)
+            painter.setClipping(False) # turn off clipping to draw box
 
         # blue borders and grab handles
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
@@ -689,56 +858,57 @@ class SnippingWidget(QWidget):
                 painter.drawEllipse(self.polygon.at(i), 6, 6)
 
     def process_image(self, polygon, x, y):
-        import mss
         from PIL import Image
         
-        # get  standard bounding box that surrounds custom angled shape
         rect = polygon.boundingRect()
-        region = {"top": rect.top(), "left": rect.left(), "width": rect.width(), "height": rect.height()}
+        # ignore accidental single clicks
+        if rect.width() < 10 or rect.height() < 10:
+            print("Snip too small, aborting.")
+            return
+            
+        img_h, img_w = self.frozen_img_cv.shape[:2]
+        top = max(0, rect.top())
+        bottom = min(img_h, rect.bottom())
+        left = max(0, rect.left())
+        right = min(img_w, rect.right())
         
-        with mss.MSS() as sct:
-            sct_img = sct.grab(region)
-            
-            # Convert mss screen grab to OpenCV numpy array
-            img = np.array(sct_img)
-            img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR) # Drop the alpha channel
-            
-            pts = []
-            for i in range(4):
-                pt = polygon.at(i)
-                pts.append([pt.x() - rect.left(), pt.y() - rect.top()])
-            
-            src_pts = np.array(pts, dtype="float32")
-            
-            # maximum width and height calculation
-            width_top = np.linalg.norm(src_pts[0] - src_pts[1])
-            width_bottom = np.linalg.norm(src_pts[3] - src_pts[2])
-            max_width = max(int(width_top), int(width_bottom))
-            
-            height_left = np.linalg.norm(src_pts[0] - src_pts[3])
-            height_right = np.linalg.norm(src_pts[1] - src_pts[2])
-            max_height = max(int(height_left), int(height_right))
-            
-            # 4 corners of image
-            dst_pts = np.array([
-                [0, 0],
-                [max_width - 1, 0],
-                [max_width - 1, max_height - 1],
-                [0, max_height - 1]
-            ], dtype="float32")
-            
-            # matrix calc
-            matrix = cv2.getPerspectiveTransform(src_pts, dst_pts)
-            warped = cv2.warpPerspective(img, matrix, (max_width, max_height))
+        cropped_cv = self.frozen_img_cv[top:bottom, left:right]
+        
+        # ensure the crop actually contains pixel data
+        if cropped_cv.size == 0:
+            print("Cropped image is empty, aborting.")
+            return
+        
+        pts = []
+        for i in range(4):
+            pt = polygon.at(i)
+            pts.append([pt.x() - left, pt.y() - top]) 
+        
+        src_pts = np.array(pts, dtype="float32")
+        
+        width_top = np.linalg.norm(src_pts[0] - src_pts[1])
+        width_bottom = np.linalg.norm(src_pts[3] - src_pts[2])
+        max_width = max(int(width_top), int(width_bottom))
+        
+        height_left = np.linalg.norm(src_pts[0] - src_pts[3])
+        height_right = np.linalg.norm(src_pts[1] - src_pts[2])
+        max_height = max(int(height_left), int(height_right))
+        
+        if max_width < 5 or max_height < 5:
+            return
 
-            final_img = Image.fromarray(cv2.cvtColor(warped, cv2.COLOR_BGR2RGB))
-            final_img.save("temp_snip.png") 
+        dst_pts = np.array([[0, 0], [max_width - 1, 0], [max_width - 1, max_height - 1], [0, max_height - 1]], dtype="float32")
+        
+        matrix = cv2.getPerspectiveTransform(src_pts, dst_pts)
+        warped = cv2.warpPerspective(cropped_cv, matrix, (max_width, max_height))
 
-            # Pass it to the background thread
-            self.ocr_thread = OCRWorker(final_img)
-            self.ocr_thread.finished.connect(lambda tokens: self.on_ocr_complete(tokens, int(x), int(y)))
-            self.ocr_thread.error.connect(lambda e: print(f"\n[CRASH LOG] OCR Failed: {e}\n"))
-            self.ocr_thread.start()
+        final_img = Image.fromarray(cv2.cvtColor(warped, cv2.COLOR_BGR2RGB))
+        final_img.save("temp_snip.png")
+        
+        self.ocr_thread = OCRWorker(final_img)
+        self.ocr_thread.finished.connect(lambda tokens: self.on_ocr_complete(tokens, int(x), int(y)))
+        self.ocr_thread.error.connect(lambda e: print(f"\n[CRASH LOG] OCR Failed: {e}\n"))
+        self.ocr_thread.start()
 
     def on_ocr_complete(self, token_list, x, y):
         if token_list:

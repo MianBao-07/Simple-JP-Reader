@@ -2,7 +2,9 @@ import os
 import json
 import requests
 import sqlite3
+
 from pathlib import Path
+from deinflect import get_base_forms
 
 # Enable or disable dictionaries
 ENABLE_OFFLINE_DICT = True 
@@ -17,6 +19,60 @@ def set_dictionary_enabled(dict_title, is_enabled):
         ENABLED_DICTIONARIES.add(dict_title)
     else:
         ENABLED_DICTIONARIES.discard(dict_title)
+
+def parse_yomitan_content(node):
+    """Recursively flattens Yomitan structured content into clean, styled HTML."""
+    if isinstance(node, str):
+        return node
+    elif isinstance(node, list):
+        return "".join(parse_yomitan_content(n) for n in node)
+    elif isinstance(node, dict):
+        tag = node.get("tag", "span")
+        content = node.get("content", node.get("text", ""))
+        
+        parsed = parse_yomitan_content(content)
+        
+        # 1. GRAMMAR BADGES (e.g., adverb, noun)
+        is_tag = False
+        if isinstance(node.get("data"), dict) and node["data"].get("class") == "tag":
+            is_tag = True
+            
+        if is_tag:
+            # PyQt doesn't support padding well on spans, so we fake it with &nbsp;
+            return f'<span style="background-color: #374151; color: #93C5FD;">&nbsp;{parsed}&nbsp;</span>&nbsp;'
+            
+        # 2. FURIGANA FORMATTING
+        if tag == "rt":
+            # Subdued gray color, slightly smaller
+            return f'<span style="color: #9CA3AF; font-size: 0.85em;">({parsed})</span>'
+        elif tag == "ruby":
+            return f'<span style="margin-right: 2px;">{parsed}</span>'
+            
+        # 3. LINE BREAKS
+        elif tag == "br":
+            return "<br>"
+            
+        # 4. BLOCK ELEMENTS & EXAMPLES
+        elif tag == "div":
+            is_example = isinstance(node.get("data"), dict) and "example" in str(node["data"])
+            if is_example:
+                # Indent examples, turn them gray, and italicize them
+                return f'<div style="color: #9CA3AF; margin-left: 20px; margin-top: 4px; margin-bottom: 8px;"><i>{parsed}</i></div>'
+            return f'<div style="margin-top: 2px; margin-bottom: 2px;">{parsed}</div>'
+            
+        # 5. LIST FORMATTING
+        elif tag == "ul":
+            return f'<ul style="margin-top: 4px; margin-bottom: 4px; padding-left: 15px;">{parsed}</ul>'
+        elif tag == "li":
+            return f'<li style="margin-bottom: 6px;">{parsed}</li>'
+            
+        # 6. STANDARD TAGS
+        elif tag in ["span", "p", "b", "strong", "i", "em"]:
+            return f"<{tag}>{parsed}</{tag}>"
+        else:
+            return parsed
+            
+    return str(node)
 
 def init_local_dictionaries_to_db():
     """Scans the 'dictionaries' folder and auto-imports Yomitan JSONs into SQLite."""
@@ -59,12 +115,7 @@ def init_local_dictionaries_to_db():
         if not index_path.exists():
             continue
 
-        try:
-            with open(index_path, 'r', encoding='utf-8') as f:
-                index_data = json.load(f)
-                dict_title = index_data.get("title", sub_dir.name)
-        except Exception:
-            dict_title = sub_dir.name
+        dict_title = sub_dir.name
 
         # Check all tables to see if this dictionary is already indexed
         cursor.execute("SELECT COUNT(*) FROM words WHERE dict_name = ?", (dict_title,))
@@ -93,10 +144,19 @@ def init_local_dictionaries_to_db():
                             if len(entry) >= 6:
                                 expression, reading, glossary = entry[0], entry[1], entry[5]
                                 
+                                html_def = ""
                                 if isinstance(glossary, list):
-                                    html_def = "<ul>" + "".join([f"<li>{item}</li>" if isinstance(item, str) else f"<li>{item.get('text', '')}</li>" for item in glossary]) + "</ul>"
+                                    html_def = "<ul>"
+                                    for item in glossary:
+                                        parsed = parse_yomitan_content(item)
+                                        if parsed.strip():
+                                            if parsed.startswith("<li"):
+                                                html_def += parsed
+                                            else:
+                                                html_def += f"<li>{parsed}</li>"
+                                    html_def += "</ul>"
                                 else:
-                                    html_def = f"<p>{glossary}</p>"
+                                    html_def = f"<p>{parse_yomitan_content(glossary)}</p>"
 
                                 cursor.execute(
                                     "INSERT INTO words (term, reading, dict_name, html_content, pitch_drop, freq) VALUES (?, ?, ?, ?, ?, ?)",
@@ -160,8 +220,6 @@ def init_local_dictionaries_to_db():
     conn.close()
 
 def query_sqlite(term):
-    init_local_dictionaries_to_db()
-
     if not os.path.exists(DB_PATH):
         return None
 
@@ -181,7 +239,6 @@ def query_sqlite(term):
 
         # Base Data Object
         data = {
-            "pitch": filtered_rows[0][0], 
             "pitch_drop": 0,
             "freq": "Installed",
             "meanings_list": []
@@ -203,16 +260,34 @@ def query_sqlite(term):
 
         conn.close()
 
-        # Assemble meanings
+        # 4. Group Meanings and Collect Readings
+        dict_groups = {}
         seen_meanings = set()
+        readings = []
+
         for row in filtered_rows:
-            dict_name, html_content = row[1], row[2]
+            reading, dict_name, html_content = row[0], row[1], row[2]
+            
+            # Collect unique readings (e.g., to catch both とうけい and とうきょう)
+            if reading and reading not in readings:
+                readings.append(reading)
+
+            # Group the HTML content by dictionary name
             if html_content not in seen_meanings:
                 seen_meanings.add(html_content)
-                data["meanings_list"].append({
-                    "dict_name": dict_name,
-                    "html_content": html_content
-                })
+                if dict_name not in dict_groups:
+                    dict_groups[dict_name] = []
+                dict_groups[dict_name].append(html_content)
+
+        # Set the combined readings at the top of the UI
+        data["pitch"] = " ・ ".join(readings) if readings else "???"
+
+        # Assemble the final list so the UI only prints one badge per dictionary
+        for d_name, contents in dict_groups.items():
+            data["meanings_list"].append({
+                "dict_name": d_name,
+                "html_content": "".join(contents)
+            })
 
         return data
 
@@ -223,23 +298,36 @@ def query_sqlite(term):
 def get_real_data(lookup_term, fallback_term=None):
     data = {
         "pitch": "???", 
-        "pitch_drop": 0, 
+        "pitch_drop": -1, 
         "freq": "Rare", 
-        "meaning": "Definition not found."
+        "jlpt": None,
+        "meaning": "Definition not found.",
+        "grammar": [] 
     }
+
+    candidates = get_base_forms(lookup_term)
+    
+    if fallback_term and fallback_term != lookup_term:
+        if not any(c["term"] == fallback_term for c in candidates):
+            candidates.append({"term": fallback_term, "grammar_path": []})
+
+    if ENABLE_OFFLINE_DICT:
+        for candidate in candidates:
+            term = candidate["term"]
+            db_result = query_sqlite(term)
+            if db_result:
+                grammar_str = " + ".join(candidate["grammar_path"]) if candidate["grammar_path"] else "Base Form"
+                print(f"-> Found '{term}' instantly via SQLite Database. [Grammar: {grammar_str}]")
+                
+                db_result["grammar"] = candidate["grammar_path"]
+                return db_result
+
+    print(f"-> '{lookup_term}' not found offline. Asking Jisho API...")
     
     terms_to_try = [lookup_term]
     if fallback_term and fallback_term != lookup_term:
         terms_to_try.append(fallback_term)
 
-    if ENABLE_OFFLINE_DICT:
-        for term in terms_to_try:
-            db_result = query_sqlite(term)
-            if db_result:
-                print(f"-> Found '{term}' instantly via SQLite Database.")
-                return db_result
-
-    print(f"-> '{lookup_term}' not found offline. Asking Jisho API...")
     for term in terms_to_try:
         if not term or not term.strip():
             continue
@@ -256,12 +344,14 @@ def get_real_data(lookup_term, fallback_term=None):
                 if entry.get("japanese"):
                     data["pitch"] = f"{entry['japanese'][0].get('reading', '')}"
                 
-                freq_tags = []
-                if entry.get("is_common", False): freq_tags.append("Common")
-                if entry.get("jlpt", []): freq_tags.append(entry.get("jlpt")[0].upper())
+                # --- Separate Frequency & JLPT ---
+                data["freq"] = "Common" if entry.get("is_common", False) else "Rare"
                 
-                if freq_tags:
-                    data["freq"] = " | ".join(freq_tags)
+                jlpt_list = entry.get("jlpt", [])
+                if jlpt_list:
+                    data["jlpt"] = jlpt_list[0].replace("jlpt-", "").upper()
+                else:
+                    data["jlpt"] = None
                 
                 break
         except requests.exceptions.RequestException:

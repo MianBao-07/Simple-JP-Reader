@@ -1,10 +1,27 @@
 {
     "show_pitch": true,
-    "show_freq": true,
+    "show_freq": false,
+    "show_jlpt": true,
     "show_meaning": true,
     "enable_translation": true,
-    "translation_engine": "google",
+    "translation_engine": "nvidia",
     "deepl_api_key": "",
+    "nvidia_api_key": "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",
+    "ai_engine": "google",
+    "global_api_key": "",
+    "local_base_url": "",
+    "vision_model": "",
+    "text_model": "",
     "enable_ai_fix": true,
-    "gemini_api_key": ""
+    "gemini_api_key": "",
+    "anki_deck": "Default",
+    "anki_model": "Test Card",
+    "anki_field_map": {
+        "term": "VocabWord",
+        "reading": "FuriganaReading",
+        "meaning": "EnglishMeaning",
+        "sentence": "GameDialogue",
+        "image": "Screenshot"
+    },
+    "anki_custom_css": "/* Create a distinct, minimalist dark canvas block */\n.sjr-dictionary {\n    font-family: -apple-system, \"Segoe UI\", Roboto, Helvetica, sans-serif;\n    line-height: 1.6;\n    background-color: #191919 !important;\n    padding: 16px;\n    border-radius: 6px;\n    border: 1px solid #333 !important;\n    margin-top: 10px;\n}\n\n/* Strip the standard lists */\n.sjr-dictionary ul {\n    list-style-type: none;\n    padding-left: 0;\n    margin: 12px 0 0 0;\n}\n\n/* Sharp, vibrant accent line for the definitions */\n.sjr-dictionary li {\n    margin-bottom: 10px;\n    padding-left: 12px;\n    border-left: 2px solid #F05A28 !important; /* Sharp orange/red accent */\n    color: #E0E0E0 !important; \n    font-size: 15px;\n}\n\n/* High-contrast, sharp-edged monochrome badge */\n.sjr-dictionary b {\n    color: #191919 !important;\n    background-color: #F0F0F0 !important; \n    padding: 3px 8px;\n    font-size: 11px;\n    font-weight: 800;\n    text-transform: uppercase;\n    letter-spacing: 1.2px;\n    display: inline-block;\n    margin-bottom: 8px;\n    border-radius: 2px; /* Sharp corners instead of rounded */\n}"
 }

@@ -17,3 +17,7 @@ default_zips/
 src/dictionary.db
 dictionary.db
 *.db
+
+# JSON Files
+config.json
+deinflect.json

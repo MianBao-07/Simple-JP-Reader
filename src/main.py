@@ -9,11 +9,11 @@ from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QListWidget, QTabWidget, QGroupBox, 
                              QCheckBox, QSlider, QFormLayout, QComboBox, 
                              QScrollArea, QLineEdit, QPushButton, QProgressBar,
-                             QFileDialog)
+                             QFileDialog, QPlainTextEdit)
 from PyQt6.QtCore import Qt, QTimer, QEvent, QThread, pyqtSignal
 
 from ui import ResultOverlay, SnippingWidget, signals, USER_SETTINGS, save_settings_disk
-from dictionary import set_dictionary_enabled
+from dictionary import set_dictionary_enabled, init_local_dictionaries_to_db
 
 class DictInstallWorker(QThread):
     progress = pyqtSignal(int, float) # percent, current_mb
@@ -150,9 +150,9 @@ class ControlPanel(QWidget):
         self.evaluate_engine_dropdown()
 
         if is_enabled:
-            self.default_lbl_text = "App is running. Press 'Alt + Click' to snip.\nWorkspace Translation ON: Click history to translate, Double-Click to copy."
+            self.default_lbl_text = "App is running. Press 'Alt' to snip and 'Ctrl + Alt' for manual adjustments.\nWorkspace Translation ON: Click history to translate, Double-Click to copy."
         else:
-            self.default_lbl_text = "App is running. Press 'Alt + Click' to snip.\nClick any history item to instantly copy it to your clipboard."
+            self.default_lbl_text = "App is running. Press 'Alt' to snip and 'Ctrl + Alt' for manual adjustments.\nClick any history item to instantly copy it to your clipboard."
         
         self.lbl.setText(self.default_lbl_text)
 
@@ -165,10 +165,11 @@ class ControlPanel(QWidget):
 
     def toggle_api_key_field(self):
         is_any_enabled = self.chk_info_trans.isChecked() or self.chk_workspace_trans.isChecked()
-        is_api_selected = "API" in self.combo_trans_engine.currentText()
+        engine_text = self.combo_trans_engine.currentText()
 
-        if hasattr(self, 'input_api_key'):
-            self.input_api_key.setEnabled(is_any_enabled and is_api_selected)
+        if hasattr(self, 'input_gemini_key') and hasattr(self, 'input_nvidia_key'):
+            self.input_deepl_key.setVisible("DeepL" in engine_text)
+            self.input_nvidia_key.setVisible("NVIDIA" in engine_text)
 
     def __init__(self, keyboard_listener):
         super().__init__()
@@ -215,6 +216,12 @@ class ControlPanel(QWidget):
         self.settings_layout = QVBoxLayout(self.tab_settings)
         self.init_settings_tab()
         self.tabs.addTab(self.tab_settings, "Settings")
+
+        # TAB 4: Anki
+        self.tab_anki = QWidget()
+        self.anki_layout = QVBoxLayout(self.tab_anki)
+        self.init_anki_tab()
+        self.tabs.addTab(self.tab_anki, "Anki")
 
         signals.update_history.connect(self.add_to_history)
 
@@ -448,6 +455,107 @@ class ControlPanel(QWidget):
         self.current_row.btn_install.setEnabled(True)
         self.current_row.mark_as_installed()
 
+        from dictionary import init_local_dictionaries_to_db
+        init_local_dictionaries_to_db()
+
+    def init_anki_tab(self):
+        group_target = QGroupBox("Target Deck & Note Type")
+        form_target = QFormLayout()
+        
+        self.input_anki_deck = QLineEdit(USER_SETTINGS.get("anki_deck", "Default"))
+        form_target.addRow("Target Deck:", self.input_anki_deck)
+
+        self.input_anki_model = QLineEdit(USER_SETTINGS.get("anki_model", "Basic"))
+        form_target.addRow("Note Type (Model):", self.input_anki_model)
+        
+        self.btn_fetch_fields = QPushButton("Connect & Fetch Fields")
+        self.btn_fetch_fields.setStyleSheet("background-color: #3B82F6; color: white; font-weight: bold; padding: 5px; border-radius: 4px;")
+        self.btn_fetch_fields.clicked.connect(self.fetch_anki_fields)
+        form_target.addRow("", self.btn_fetch_fields)
+        
+        group_target.setLayout(form_target)
+        self.anki_layout.addWidget(group_target)
+
+        self.group_mapping = QGroupBox("Field Mapping")
+        self.form_mapping = QFormLayout()
+        
+        self.lbl_mapping_status = QLabel("Enter your Note Type and click 'Fetch Fields' to map your data.")
+        self.lbl_mapping_status.setStyleSheet("color: #9CA3AF; font-style: italic;")
+        self.form_mapping.addRow(self.lbl_mapping_status)
+        
+        self.group_mapping.setLayout(self.form_mapping)
+        self.anki_layout.addWidget(self.group_mapping)
+
+        # --- custom css ---
+        group_css = QGroupBox("Custom Dictionary CSS Styling")
+        layout_css = QVBoxLayout()
+        
+        lbl_css_hint = QLabel("Style your dictionary payload using the <b>.sjr-dictionary</b> wrapper class:")
+        lbl_css_hint.setStyleSheet("color: #9CA3AF; font-size: 12px;")
+        layout_css.addWidget(lbl_css_hint)
+
+        self.input_anki_css = QPlainTextEdit(USER_SETTINGS.get("anki_custom_css", ""))
+        self.input_anki_css.setPlaceholderText("Write your custom CSS here...")
+        self.input_anki_css.setFixedHeight(130)
+        self.input_anki_css.setStyleSheet("font-family: monospace; font-size: 13px; background-color: #1E1E2E; color: #CDD6F4; border: 1px solid #444; border-radius: 4px;")
+        layout_css.addWidget(self.input_anki_css)
+
+        group_css.setLayout(layout_css)
+        self.anki_layout.addWidget(group_css)
+
+        self.anki_layout.addStretch()
+
+    def fetch_anki_fields(self):
+        model_name = self.input_anki_model.text().strip()
+        if not model_name:
+            self.lbl_mapping_status.setText("Please enter a Note Type first.")
+            self.lbl_mapping_status.setStyleSheet("color: #EF4444; font-weight: bold;")
+            return
+
+        self.btn_fetch_fields.setText("Fetching...")
+        QApplication.processEvents()
+
+        # Call the Anki bridge
+        from anki_export import invoke
+        fields = invoke("modelFieldNames", modelName=model_name)
+
+        if isinstance(fields, dict) and "error" in fields:
+            self.lbl_mapping_status.setText(f"Anki Error: {fields['error']}\nIs Anki open?")
+            self.lbl_mapping_status.setStyleSheet("color: #EF4444; font-weight: bold;")
+            self.btn_fetch_fields.setText("Connect & Fetch Fields")
+            return
+
+        while self.form_mapping.rowCount() > 0:
+            self.form_mapping.removeRow(0)
+
+        lbl_success = QLabel("Fields fetched! Map your data to Anki below:")
+        lbl_success.setStyleSheet("color: #10B981; font-weight: bold; margin-bottom: 5px;")
+        self.form_mapping.addRow(lbl_success)
+
+        app_data_points = [
+            ("term", "Expression (Kanji):"),
+            ("reading", "Reading (Furigana):"),
+            ("meaning", "Definition (Glossary):"),
+            ("sentence", "Context Sentence:"),
+            ("image", "Screenshot (Image):")
+        ]
+
+        self.mapping_combos = {}
+        saved_map = USER_SETTINGS.get("anki_field_map", {})
+
+        for key, label in app_data_points:
+            combo = QComboBox()
+            combo.addItem("-- Ignore --")
+            combo.addItems(fields)
+            
+            if key in saved_map and saved_map[key] in fields:
+                combo.setCurrentText(saved_map[key])
+            
+            self.mapping_combos[key] = combo
+            self.form_mapping.addRow(label, combo)
+
+        self.btn_fetch_fields.setText("Connect & Fetch Fields")
+
     def init_settings_tab(self):
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
@@ -480,77 +588,84 @@ class ControlPanel(QWidget):
         group_capture.setLayout(form_capture)
         content_layout.addWidget(group_capture) 
 
-        # --- AI Fix ---
-        group_ai = QGroupBox("AI Fix")
+        # --- Unified AI & Translation ---
+        group_ai = QGroupBox("Unified AI & Translation Backend")
         form_ai = QFormLayout()
 
-        self.chk_ai_fix = QCheckBox("Enable AI Fix (✨)")
-        self.chk_ai_fix.setChecked(USER_SETTINGS.get("enable_ai_fix", True))
-
-        self.input_gemini_key = QLineEdit(USER_SETTINGS.get("gemini_api_key", ""))
-        self.input_gemini_key.setEchoMode(QLineEdit.EchoMode.Password)
-        self.input_gemini_key.setPlaceholderText("Go to aistudio.google to obtain a key.")
-
-        form_ai.addRow(self.chk_ai_fix)
-        form_ai.addRow("Gemini API Key:", self.input_gemini_key)
+        self.combo_ai_engine = QComboBox()
+        self.combo_ai_engine.addItems([
+            "Google (Gemini & Translate)", 
+            "NVIDIA NIM (Cloud)", 
+            "Local LLM (Ollama/LM Studio)", 
+            "DeepL (Text Only)"
+        ])
         
+        # Set dropdown based on saved engine
+        engine_map = {"google": 0, "nvidia": 1, "local": 2, "deepl": 3}
+        self.combo_ai_engine.setCurrentIndex(engine_map.get(USER_SETTINGS.get("ai_engine", "google"), 0))
+        form_ai.addRow("Active Engine:", self.combo_ai_engine)
+
+        self.input_api_key = QLineEdit(USER_SETTINGS.get("global_api_key", ""))
+        self.input_api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.input_api_key.setPlaceholderText("Leave blank for Local LLMs")
+        form_ai.addRow("API Key:", self.input_api_key)
+
+        self.input_base_url = QLineEdit(USER_SETTINGS.get("local_base_url", ""))
+        self.input_base_url.setPlaceholderText("http://localhost:11434/v1")
+        form_ai.addRow("Local Base URL:", self.input_base_url)
+
+        self.input_vision_model = QLineEdit(USER_SETTINGS.get("vision_model", ""))
+        self.input_vision_model.setPlaceholderText("e.g. meta/llama-3.2-90b-vision-instruct")
+        form_ai.addRow("Vision Model (AI Fix):", self.input_vision_model)
+
+        self.input_text_model = QLineEdit(USER_SETTINGS.get("text_model", ""))
+        self.input_text_model.setPlaceholderText("e.g. meta/llama-3.1-70b-instruct")
+        form_ai.addRow("Text Model (Translate):", self.input_text_model)
+
+        # Toggles
+        self.chk_ai_fix = QCheckBox("Enable AI OCR Fix (✨)")
+        self.chk_ai_fix.setChecked(USER_SETTINGS.get("enable_ai_fix", True))
+        
+        self.chk_info_trans = QCheckBox("Enable Info Box Translation (Aあ)")
+        self.chk_info_trans.setChecked(USER_SETTINGS.get("enable_translation", True))
+        
+        form_ai.addRow(self.chk_ai_fix)
+        form_ai.addRow(self.chk_info_trans)
+
         group_ai.setLayout(form_ai)
         content_layout.addWidget(group_ai)
 
-        # --- AI Translation ---
-        group_trans = QGroupBox("AI Translation")
-        form_trans = QFormLayout()
-        
-        self.combo_trans_engine = QComboBox()
-        self.combo_trans_engine.addItems(["Google Translate (Free)", "DeepL API (Requires Key)"])
-        # Set default based on settings
-        if USER_SETTINGS.get("translation_engine", "google") == "deepl":
-            self.combo_trans_engine.setCurrentIndex(1)
-        form_trans.addRow("Active Engine:", self.combo_trans_engine)
+        # --- AnkiConnect Integration ---
+        group_anki = QGroupBox("AnkiConnect (Card Mining)")
+        form_anki = QFormLayout()
 
-        self.input_api_key = QLineEdit(USER_SETTINGS.get("deepl_api_key", ""))
-        self.input_api_key.setPlaceholderText("Enter DeepL API Key")
-        self.input_api_key.setEchoMode(QLineEdit.EchoMode.Password)
-        form_trans.addRow("API Key:", self.input_api_key)
-        
-        self.chk_info_trans = QCheckBox("Enable in Info Box (Aあ)")
-        self.chk_info_trans.setChecked(USER_SETTINGS.get("enable_translation", True))
-        self.combo_info_trigger = QComboBox()
-        self.combo_info_trigger.addItems(["Click sentence to translate", "Auto-translate on snip"])
-        form_trans.addRow(self.chk_info_trans, self.combo_info_trigger)
+        self.input_anki_deck = QLineEdit(USER_SETTINGS.get("anki_deck", "Default"))
+        form_anki.addRow("Target Deck:", self.input_anki_deck)
 
-        self.chk_workspace_trans = QCheckBox("Enable in Workspace")
-        self.chk_workspace_trans.setChecked(False)
-        self.combo_workspace_trigger = QComboBox()
-        self.combo_workspace_trigger.addItems(["Click: Translate | Double-Click: Copy"])
-        form_trans.addRow(self.chk_workspace_trans, self.combo_workspace_trigger)
+        self.input_anki_model = QLineEdit(USER_SETTINGS.get("anki_model", "Basic"))
+        form_anki.addRow("Note Type (Model):", self.input_anki_model)
 
-        group_trans.setLayout(form_trans)
-        content_layout.addWidget(group_trans)
-        
-        self.chk_info_trans.toggled.connect(self.update_info_state)
-        self.chk_workspace_trans.toggled.connect(self.update_workspace_state)
-        self.combo_trans_engine.currentTextChanged.connect(lambda: self.toggle_api_key_field())
-        
-        self.update_info_state(self.chk_info_trans.isChecked())
-        self.update_workspace_state(self.chk_workspace_trans.isChecked())
-        self.toggle_api_key_field()
+        group_anki.setLayout(form_anki)
+        content_layout.addWidget(group_anki)
 
         # --- Display Features ---
         group_display = QGroupBox("Dictionary Display")
         l_display = QVBoxLayout()
+        
         self.chk_show_pitch = QCheckBox("Show Pitch Accent Graphs")
-        self.chk_show_pitch.setChecked(True)
+        self.chk_show_pitch.setChecked(USER_SETTINGS.get("show_pitch", True))
+        
         self.chk_show_freq = QCheckBox("Show Frequency Tags (e.g., Common)")
-        self.chk_show_freq.setChecked(True)
+        self.chk_show_freq.setChecked(USER_SETTINGS.get("show_freq", True))
+        
         self.chk_show_jlpt = QCheckBox("Show JLPT Difficulty (N5 - N1)")
-        self.chk_show_jlpt.setChecked(True)
+        self.chk_show_jlpt.setChecked(USER_SETTINGS.get("show_jlpt", True))
         
         l_display.addWidget(self.chk_show_pitch)
         l_display.addWidget(self.chk_show_freq)
         l_display.addWidget(self.chk_show_jlpt)
         group_display.setLayout(l_display)
-        content_layout.addWidget(group_display) 
+        content_layout.addWidget(group_display)
 
         # --- Appearance ---
         group_app = QGroupBox("Appearance")
@@ -580,19 +695,46 @@ class ControlPanel(QWidget):
 
     def save_settings(self):
         USER_SETTINGS["enable_ai_fix"] = self.chk_ai_fix.isChecked()
-        USER_SETTINGS["gemini_api_key"] = self.input_gemini_key.text().strip()
-        
         USER_SETTINGS["enable_translation"] = self.chk_info_trans.isChecked()
-        engine_text = self.combo_trans_engine.currentText()
-        USER_SETTINGS["translation_engine"] = "deepl" if "DeepL" in engine_text else "google"
-        USER_SETTINGS["deepl_api_key"] = self.input_api_key.text().strip()
+        
+        engine_text = self.combo_ai_engine.currentText()
+        if "Google" in engine_text:
+            USER_SETTINGS["ai_engine"] = "google"
+        elif "NVIDIA" in engine_text:
+            USER_SETTINGS["ai_engine"] = "nvidia"
+        elif "Local" in engine_text:
+            USER_SETTINGS["ai_engine"] = "local"
+        elif "DeepL" in engine_text:
+            USER_SETTINGS["ai_engine"] = "deepl"
+            
+        USER_SETTINGS["global_api_key"] = self.input_api_key.text().strip()
+        USER_SETTINGS["local_base_url"] = self.input_base_url.text().strip()
+        USER_SETTINGS["vision_model"] = self.input_vision_model.text().strip()
+        USER_SETTINGS["text_model"] = self.input_text_model.text().strip()
+
+        USER_SETTINGS["show_pitch"] = self.chk_show_pitch.isChecked()
+        USER_SETTINGS["show_freq"] = self.chk_show_freq.isChecked()
+        USER_SETTINGS["show_jlpt"] = self.chk_show_jlpt.isChecked()
+
+        USER_SETTINGS["anki_deck"] = self.input_anki_deck.text().strip() or "Default"
+        USER_SETTINGS["anki_model"] = self.input_anki_model.text().strip() or "Basic"
+        USER_SETTINGS["anki_deck"] = self.input_anki_deck.text().strip()
+        USER_SETTINGS["anki_model"] = self.input_anki_model.text().strip()
+        USER_SETTINGS["anki_custom_css"] = self.input_anki_css.toPlainText()
+
+        if hasattr(self, 'mapping_combos'):
+            field_map = {}
+            for key, combo in self.mapping_combos.items():
+                val = combo.currentText()
+                if val != "-- Ignore --":
+                    field_map[key] = val
+            USER_SETTINGS["anki_field_map"] = field_map
 
         save_settings_disk()
-
         self.btn_save_settings.setText("Settings Saved.")
         self.btn_save_settings.setStyleSheet("background-color: #10B981; color: white; font-weight: bold; padding: 10px; border-radius: 5px;")
         
-        # Reset button text after 2 seconds
+        from PyQt6.QtCore import QTimer
         QTimer.singleShot(2000, lambda: self.btn_save_settings.setText("Save Settings"))
         QTimer.singleShot(2000, lambda: self.btn_save_settings.setStyleSheet("background-color: #3B82F6; color: white; font-weight: bold; padding: 10px; border-radius: 5px;"))
 
@@ -633,6 +775,9 @@ if __name__ == '__main__':
     
     result_ui = ResultOverlay()
     snip_ui = SnippingWidget()
+
+    from dictionary import init_local_dictionaries_to_db
+    init_local_dictionaries_to_db()
     
     listener = keyboard.Listener(on_press=on_press, on_release=on_release)
     listener.start()

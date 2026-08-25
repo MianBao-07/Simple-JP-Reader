@@ -19,5 +19,4 @@ dictionary.db
 *.db
 
 # JSON Files
-config.json
-deinflect.json
+*.json

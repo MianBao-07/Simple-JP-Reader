@@ -42,6 +42,10 @@ def get_model_names():
 def add_anki_card(deck_name, model_name, term, reading, definition, sentence, image_path=None, custom_map=None):
     if custom_map is None:
         custom_map = {}
+
+    # word highlight function
+    if sentence and term in sentence:
+        sentence = sentence.replace(term, f'<span class="highlight">{term}</span>')
         
     mapped_fields = {}
     

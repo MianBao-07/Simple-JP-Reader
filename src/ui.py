@@ -720,28 +720,35 @@ class SnippingWidget(QWidget):
         self.state = "IDLE"
         self.polygon.clear()
 
+        from PyQt6.QtGui import QCursor, QGuiApplication
         import mss
-        with mss.MSS() as sct:
-            monitor = sct.monitors[1]
+
+        current_screen = QGuiApplication.screenAt(QCursor.pos())
+        if not current_screen:
+            current_screen = QGuiApplication.primaryScreen()
+            
+        geom = current_screen.geometry()
+
+        with mss.mss() as sct:
+            monitor = {
+                "top": geom.y(),
+                "left": geom.x(),
+                "width": geom.width(),
+                "height": geom.height()
+            }
             sct_img = sct.grab(monitor)
 
-            self.frozen_img_cv = np.array(sct_img)
-            self.frozen_img_cv = cv2.cvtColor(self.frozen_img_cv, cv2.COLOR_BGRA2BGR)
+        self.frozen_img_cv = np.array(sct_img)
+        self.frozen_img_cv = cv2.cvtColor(self.frozen_img_cv, cv2.COLOR_BGRA2BGR)
 
         height, width, channel = self.frozen_img_cv.shape
         bytes_per_line = 3 * width
         q_img = QImage(self.frozen_img_cv.data, width, height, bytes_per_line, QImage.Format.Format_BGR888)
         self.frozen_pixmap = QPixmap.fromImage(q_img)
 
-        screen_geometry = QGuiApplication.primaryScreen().geometry()
-        self.setGeometry(screen_geometry)
+        self.setGeometry(geom)
         self.show()
         self.update()
-
-        screen_geometry = QGuiApplication.primaryScreen().geometry()
-        self.setGeometry(screen_geometry)
-        self.show()
-        self.update() # force a repaint
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:

@@ -14,8 +14,8 @@
     "text_model": "",
     "enable_ai_fix": true,
     "gemini_api_key": "",
-    "anki_deck": "Default",
-    "anki_model": "Test Card",
+    "anki_deck": "testest",
+    "anki_model": "test",
     "anki_field_map": {
         "term": "VocabWord",
         "reading": "FuriganaReading",

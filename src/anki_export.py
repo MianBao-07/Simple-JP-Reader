@@ -1,8 +1,66 @@
 import os
 import base64
 import requests
+import time
+from janome.tokenizer import Tokenizer
 
 ANKI_URL = "http://127.0.0.1:8765"
+
+# Initialize Janome once for lightning-fast tokenization
+janome_tokenizer = Tokenizer()
+
+def generate_html_ruby(text):
+    """Generates standard HTML ruby tags with smart Okurigana separation."""
+    tokens = janome_tokenizer.tokenize(text)
+    result = ""
+    for token in tokens:
+        surface = token.surface
+        reading = token.reading
+        
+        # If the word contains a Kanji and Janome found a reading
+        if any('\u4e00' <= c <= '\u9faf' for c in surface) and reading and reading != "*":
+            # Convert Katakana reading to Hiragana
+            hiragana = "".join(chr(ord(c) - 96) if 12449 <= ord(c) <= 12534 else c for c in reading)
+            
+            # 1. Strip matching leading kana (e.g., お茶 -> お + 茶)
+            lead_kana = ""
+            while surface and hiragana and surface[0] == hiragana[0]:
+                lead_kana += surface[0]
+                surface = surface[1:]
+                hiragana = hiragana[1:]
+                
+            # 2. Strip matching trailing kana/Okurigana (e.g., 染まる -> 染 + まる)
+            tail_kana = ""
+            while surface and hiragana and surface[-1] == hiragana[-1]:
+                tail_kana = surface[-1] + tail_kana
+                surface = surface[:-1]
+                hiragana = hiragana[:-1]
+                
+            # 3. Wrap ONLY the remaining Kanji core
+            if surface:
+                result += f"{lead_kana}<ruby>{surface}<rt>{hiragana}</rt></ruby>{tail_kana}"
+            else:
+                result += f"{lead_kana}{tail_kana}"
+        else:
+            result += surface
+    return result
+
+def auto_highlight(sentence, term):
+    """Generates furigana and safely wraps the target term in the highlight HTML."""
+    if not sentence or not term:
+        return sentence
+        
+    ruby_sentence = generate_html_ruby(sentence)
+    ruby_term = generate_html_ruby(term)
+    
+    # Attempt 1: Match the exact ruby-generated term
+    highlighted = ruby_sentence.replace(ruby_term, f'<span class="highlight">{ruby_term}</span>')
+    
+    # Attempt 2 (Fallback): If Janome parsed the term differently in context
+    if highlighted == ruby_sentence:
+        highlighted = ruby_sentence.replace(term, f'<span class="highlight">{term}</span>')
+        
+    return highlighted
 
 def invoke(action, **params):
     try:
@@ -42,21 +100,25 @@ def get_model_names():
 def add_anki_card(deck_name, model_name, term, reading, definition, sentence, image_path=None, custom_map=None):
     if custom_map is None:
         custom_map = {}
-
-    # word highlight function
+        
     if sentence and term in sentence:
-        sentence = sentence.replace(term, f'<span class="highlight">{term}</span>')
+        sentence = auto_highlight(sentence, term)
+
+    term_with_ruby = generate_html_ruby(term)
         
     mapped_fields = {}
     
-    if custom_map.get("term"): mapped_fields[custom_map["term"]] = term
+    if custom_map.get("term"): mapped_fields[custom_map["term"]] = term_with_ruby
+    if custom_map.get("word"): mapped_fields[custom_map["word"]] = term_with_ruby
     if custom_map.get("reading"): mapped_fields[custom_map["reading"]] = reading
     if custom_map.get("meaning"): mapped_fields[custom_map["meaning"]] = definition
     if custom_map.get("sentence"): mapped_fields[custom_map["sentence"]] = sentence
     
     image_field = custom_map.get("image")
     if image_field and image_path and os.path.exists(image_path):
-        img_name = os.path.basename(image_path)
+        timestamp = int(time.time())
+        img_name = f"simple_jp_reader_{timestamp}.png"
+        
         with open(image_path, "rb") as img_file:
             b64_data = base64.b64encode(img_file.read()).decode("utf-8")
         
@@ -74,7 +136,7 @@ def add_anki_card(deck_name, model_name, term, reading, definition, sentence, im
         "modelName": model_name,
         "fields": mapped_fields,
         "options": {
-            "allowDuplicate": False, # Prevents creating identical cards
+            "allowDuplicate": False,
             "duplicateScope": "deck"
         },
         "tags": ["simple-jp-reader"]

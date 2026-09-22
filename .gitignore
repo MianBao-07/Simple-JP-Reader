@@ -34,3 +34,4 @@ default_zips/
 
 # Preserve required static files
 !src/deinflect.json
+!src/app_icon.png

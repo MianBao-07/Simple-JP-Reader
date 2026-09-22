@@ -1,6 +1,10 @@
-# Simple-JP-Reader (Alpha Stage)
+<div align="center">
+  <img src="assets/logo.png" alt="Simple-JP-Reader Logo" width="160" height="160" />
+  <h1>Simple-JP-Reader (Alpha Stage)</h1>
+  <p><i>A lightweight, customizable Japanese OCR and reading assistant tool built with Python and PyQt6.</i></p>
+</div>
 
-A lightweight, customizable Japanese OCR and reading assistant tool built with Python and PyQt6. Simply press a hotkey to snip a section of your screen, and the app will instantly extract the Japanese text, de-conjugate verbs, and provide dictionary definitions.
+Simply press a hotkey to snip a section of your screen, and the app will instantly extract the Japanese text, de-conjugate verbs, and provide dictionary definitions.
 
 After experimenting with a handful of Japanese-learning apps myself, I dedicated this personal project to making something free, simple, and customizable to my needs, which not a lot of commercial apps provide.
 

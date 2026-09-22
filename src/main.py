@@ -260,9 +260,13 @@ class DictionaryRow(QWidget):
         return super().eventFilter(obj, event)
 
 def get_tray_icon():
-    icon_path = os.path.join(os.path.dirname(__file__), "app_icon.png")
-    if os.path.exists(icon_path):
-        return QIcon(icon_path)
+    candidates = [
+        os.path.join(os.path.dirname(__file__), "app_icon.png"),
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "logo.png"),
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return QIcon(path)
     
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.GlobalColor.transparent)
@@ -316,6 +320,7 @@ class ControlPanel(QWidget):
         
         self.setWindowTitle("Simple JP Reader - Workspace")
         self.resize(480, 520)
+        self.setWindowIcon(get_tray_icon())
         
         # System Tray Icon Setup
         self.tray_icon = QSystemTrayIcon(self)
@@ -1135,7 +1140,14 @@ def on_release(key):
 
     
 if __name__ == '__main__':
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("simplejpreader.app.1.0")
+    except Exception:
+        pass
+
     app = QApplication(sys.argv)
+    app.setWindowIcon(get_tray_icon())
     app.setQuitOnLastWindowClosed(False)
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     

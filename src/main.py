@@ -905,12 +905,15 @@ class ControlPanel(QWidget):
         
         self.chk_show_pitch = QCheckBox("Show Pitch Accent Graphs")
         self.chk_show_pitch.setChecked(USER_SETTINGS.get("show_pitch", True))
+        self.chk_show_pitch.toggled.connect(self.save_settings)
         
         self.chk_show_freq = QCheckBox("Show Frequency Tags (e.g., Common)")
         self.chk_show_freq.setChecked(USER_SETTINGS.get("show_freq", True))
+        self.chk_show_freq.toggled.connect(self.save_settings)
         
         self.chk_show_jlpt = QCheckBox("Show JLPT Difficulty (N5 - N1)")
         self.chk_show_jlpt.setChecked(USER_SETTINGS.get("show_jlpt", True))
+        self.chk_show_jlpt.toggled.connect(self.save_settings)
         
         l_display.addWidget(self.chk_show_pitch)
         l_display.addWidget(self.chk_show_freq)
@@ -1053,6 +1056,7 @@ class ControlPanel(QWidget):
 
 # --- KEY DETECTION ---
 active_keys = set()
+last_hotkey_trigger_time = 0.0
 
 def matches_hotkey(hotkey_str, trigger_key):
     if not hotkey_str:
@@ -1075,7 +1079,14 @@ def matches_hotkey(hotkey_str, trigger_key):
 
     base_keys = [p for p in parts if p not in ("ctrl", "alt", "shift")]
     if not base_keys:
-        return trigger_key in (keyboard.Key.alt_l, keyboard.Key.alt_r, keyboard.Key.alt, keyboard.Key.alt_gr)
+        allowed_modifiers = []
+        if alt_req:
+            allowed_modifiers.extend([keyboard.Key.alt_l, keyboard.Key.alt_r, keyboard.Key.alt, keyboard.Key.alt_gr])
+        if ctrl_req:
+            allowed_modifiers.extend([keyboard.Key.ctrl_l, keyboard.Key.ctrl_r, keyboard.Key.ctrl])
+        if shift_req:
+            allowed_modifiers.extend([keyboard.Key.shift, keyboard.Key.shift_l, keyboard.Key.shift_r])
+        return trigger_key in allowed_modifiers
 
     base = base_keys[0]
     if base == "f2" and trigger_key == keyboard.Key.f2:
@@ -1091,14 +1102,22 @@ def matches_hotkey(hotkey_str, trigger_key):
     return False
 
 def on_press(key):
+    global last_hotkey_trigger_time
     if key in active_keys:
         return
     active_keys.add(key)
+
+    import time
+    now = time.time()
+    if now - last_hotkey_trigger_time < 0.8:
+        return
 
     # Check Manual Snip first (prioritize combination hotkeys like Ctrl+Alt)
     if USER_SETTINGS.get("enable_manual_snip", True):
         hotkey = USER_SETTINGS.get("manual_snip_hotkey", "Ctrl+Alt")
         if matches_hotkey(hotkey, key):
+            last_hotkey_trigger_time = now
+            active_keys.clear()
             signals.trigger_manual_snip.emit()
             return
 
@@ -1106,6 +1125,8 @@ def on_press(key):
     if USER_SETTINGS.get("enable_quick_snip", True):
         hotkey = USER_SETTINGS.get("quick_snip_hotkey", "Alt")
         if matches_hotkey(hotkey, key):
+            last_hotkey_trigger_time = now
+            active_keys.clear()
             signals.trigger_quick_snip.emit()
             return
 

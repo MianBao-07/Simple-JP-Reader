@@ -247,6 +247,8 @@ class ExpandableWordWidget(QWidget):
         self.header_layout.addStretch()
 
         self.pitch_graph = PitchGraphWidget("", pitch_drop=-1)
+        if not USER_SETTINGS.get("show_pitch", True):
+            self.pitch_graph.hide()
         self.header_layout.addWidget(self.pitch_graph)
 
         self.btn_anki = QPushButton("+")
@@ -449,9 +451,12 @@ class ExpandableWordWidget(QWidget):
             self.lbl_lemma.hide()
 
         if hasattr(self, 'pitch_graph'):
-            dummy_drop = len(self.base_form) % 3
-            self.pitch_graph.update_pitch(self.base_form, dummy_drop)
-            self.pitch_graph.show()
+            if USER_SETTINGS.get("show_pitch", True):
+                dummy_drop = len(self.base_form) % 3
+                self.pitch_graph.update_pitch(self.base_form, dummy_drop)
+                self.pitch_graph.show()
+            else:
+                self.pitch_graph.hide()
 
         for i in reversed(range(self.content_layout.count())):
             widget = self.content_layout.itemAt(i).widget()
@@ -892,7 +897,19 @@ class PitchGraphWidget(QWidget):
         self.spacing = 12
         self.update_pitch(word, pitch_drop)
 
+    def setVisible(self, visible):
+        if visible and not USER_SETTINGS.get("show_pitch", True):
+            super().setVisible(False)
+            return
+        super().setVisible(visible)
+
     def update_pitch(self, new_word, new_pitch_drop):
+        if not USER_SETTINGS.get("show_pitch", True):
+            self.pitch_drop = -1
+            self.setFixedSize(0, 0)
+            self.hide()
+            return
+
         self.word = new_word.split('・')[0].strip() if new_word else ""
         self.pitch_drop = new_pitch_drop
         
@@ -907,7 +924,7 @@ class PitchGraphWidget(QWidget):
         self.update()
 
     def paintEvent(self, event):
-        if self.pitch_drop == -1:
+        if not USER_SETTINGS.get("show_pitch", True) or self.pitch_drop == -1:
             return
             
         painter = QPainter(self)
@@ -967,6 +984,7 @@ class SnippingWidget(QWidget):
 
         self.is_manual_mode = False
         self.state = "HIDDEN"
+        self.last_snip_time = 0.0
 
         self.start_point = QPoint()
         self.end_point = QPoint()
@@ -977,6 +995,12 @@ class SnippingWidget(QWidget):
         signals.trigger_manual_snip.connect(lambda: self.start_snipping(is_manual=True))
 
     def start_snipping(self, is_manual):
+        import time
+        now = time.time()
+        if self.isVisible() or self.state != "HIDDEN" or (now - getattr(self, 'last_snip_time', 0.0) < 0.8):
+            return
+        self.last_snip_time = now
+
         self.is_manual_mode = is_manual
         self.state = "IDLE"
         self.polygon.clear()
@@ -1051,8 +1075,10 @@ class SnippingWidget(QWidget):
                 
                 if not self.is_manual_mode:
                     # --- QUICK SNIP MODE ---
+                    import time
                     self.state = "HIDDEN"
                     self.hide()
+                    self.last_snip_time = time.time()
                     rect = QRect(self.start_point, self.end_point).normalized()
                     poly = QPolygon([rect.topLeft(), rect.topRight(), rect.bottomRight(), rect.bottomLeft()])
                     
@@ -1069,8 +1095,10 @@ class SnippingWidget(QWidget):
     def keyPressEvent(self, event):
         if self.state == "ADJUSTING":
             if event.key() == Qt.Key.Key_Return or event.key() == Qt.Key.Key_Enter:
+                import time
                 self.state = "HIDDEN"
                 self.hide()
+                self.last_snip_time = time.time()
                 
                 rect = self.polygon.boundingRect()
                 poly_copy = QPolygon(self.polygon)
@@ -1078,8 +1106,10 @@ class SnippingWidget(QWidget):
                 QTimer.singleShot(100, lambda: self.process_image(poly_copy, rect.x(), rect.y()))
                 
             elif event.key() == Qt.Key.Key_Escape:
+                import time
                 self.state = "HIDDEN"
                 self.hide()
+                self.last_snip_time = time.time()
 
     def paintEvent(self, event):
         if self.state == "HIDDEN":

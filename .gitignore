@@ -1,22 +1,33 @@
 # Python cache
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 
 # Virtual Environments
 .venv/
 venv/
+ENV/
+
+# Environment / Secrets
+.env
+.env.*
+
+# Cache and temporary files
+.cache/
+*.png
+temp_snip.png
+debug_preprocessed_snip.png
+snip_test.png
+
+# Databases
+*.db
+src/dictionary.db
+dictionary.db
 
 # Offline Dictionaries
 src/dictionaries/
 dictionaries/
 default_zips/
 
-# Ignore test pics
-*.png
-
-src/dictionary.db
-dictionary.db
-*.db
-
-# JSON Files
-*.json
+# Preserve required static files
+!src/deinflect.json

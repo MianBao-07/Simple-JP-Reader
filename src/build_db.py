@@ -59,7 +59,8 @@ def build_database():
         )
     ''')
     
-    cursor.execute('CREATE INDEX idx_term ON words(term)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_term ON words(term)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_dict_name ON words(dict_name)')
 
     # --- PRE-LOAD PITCH ACCENTS ---
     pitch_data = {}

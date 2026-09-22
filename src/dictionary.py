@@ -2,6 +2,7 @@ import os
 import json
 import requests
 import sqlite3
+import threading
 
 from pathlib import Path
 from deinflect import get_base_forms
@@ -13,6 +14,19 @@ ENABLE_OFFLINE_DICT = True
 DB_PATH = os.path.join(os.path.dirname(__file__), "dictionary.db")
 
 ENABLED_DICTIONARIES = set()
+
+_thread_local = threading.local()
+
+def get_readonly_connection():
+    """Returns a thread-local SQLite connection in read-only mode for fast concurrent lookups."""
+    if not os.path.exists(DB_PATH):
+        return None
+    if not hasattr(_thread_local, "conn") or _thread_local.conn is None:
+        try:
+            _thread_local.conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+        except Exception:
+            _thread_local.conn = sqlite3.connect(DB_PATH)
+    return _thread_local.conn
 
 def set_dictionary_enabled(dict_title, is_enabled):
     if is_enabled:
@@ -38,12 +52,11 @@ def parse_yomitan_content(node):
             is_tag = True
             
         if is_tag:
-            # PyQt doesn't support padding well on spans, so we fake it with &nbsp;
+            # Fake padding with &nbsp; for spans
             return f'<span style="background-color: #374151; color: #93C5FD;">&nbsp;{parsed}&nbsp;</span>&nbsp;'
             
         # 2. FURIGANA FORMATTING
         if tag == "rt":
-            # Subdued gray color, slightly smaller
             return f'<span style="color: #9CA3AF; font-size: 0.85em;">({parsed})</span>'
         elif tag == "ruby":
             return f'<span style="margin-right: 2px;">{parsed}</span>'
@@ -56,7 +69,6 @@ def parse_yomitan_content(node):
         elif tag == "div":
             is_example = isinstance(node.get("data"), dict) and "example" in str(node["data"])
             if is_example:
-                # Indent examples, turn them gray, and italicize them
                 return f'<div style="color: #9CA3AF; margin-left: 20px; margin-top: 4px; margin-bottom: 8px;"><i>{parsed}</i></div>'
             return f'<div style="margin-top: 2px; margin-bottom: 2px;">{parsed}</div>'
             
@@ -100,11 +112,14 @@ def init_local_dictionaries_to_db():
         )
     """)
     
+    # Create indexes for both term search and dictionary filtering
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_words_term ON words(term)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_words_dict_name ON words(dict_name)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_meta_pitch_term ON meta_pitch(term)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_meta_pitch_dict_name ON meta_pitch(dict_name)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_meta_freq_term ON meta_freq(term)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_meta_freq_dict_name ON meta_freq(dict_name)")
 
-    conn.commit()
     conn.commit()
 
     for sub_dir in dict_root.iterdir():
@@ -117,15 +132,15 @@ def init_local_dictionaries_to_db():
 
         dict_title = sub_dir.name
 
-        # Check all tables to see if this dictionary is already indexed
-        cursor.execute("SELECT COUNT(*) FROM words WHERE dict_name = ?", (dict_title,))
-        c1 = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM meta_pitch WHERE dict_name = ?", (dict_title,))
-        c2 = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM meta_freq WHERE dict_name = ?", (dict_title,))
-        c3 = cursor.fetchone()[0]
+        # Fast limit-1 check across tables
+        cursor.execute("SELECT 1 FROM words WHERE dict_name = ? OR dict_name = ? LIMIT 1", (dict_title, f"{dict_title} (Kanji)"))
+        c1 = cursor.fetchone()
+        cursor.execute("SELECT 1 FROM meta_pitch WHERE dict_name = ? LIMIT 1", (dict_title,))
+        c2 = cursor.fetchone()
+        cursor.execute("SELECT 1 FROM meta_freq WHERE dict_name = ? LIMIT 1", (dict_title,))
+        c3 = cursor.fetchone()
 
-        if c1 + c2 + c3 > 0:
+        if c1 or c2 or c3:
             continue
 
         print(f"[Dictionary] Indexing local dictionary: {dict_title}...")
@@ -220,11 +235,11 @@ def init_local_dictionaries_to_db():
     conn.close()
 
 def query_sqlite(term):
-    if not os.path.exists(DB_PATH):
+    conn = get_readonly_connection()
+    if not conn:
         return None
 
     try:
-        conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
         cursor = conn.cursor()
 
         # 1. Fetch meanings
@@ -234,7 +249,6 @@ def query_sqlite(term):
         filtered_rows = [row for row in rows if row[1] in ENABLED_DICTIONARIES or row[1].replace(" (Kanji)", "") in ENABLED_DICTIONARIES]
         
         if not filtered_rows:
-            conn.close()
             return None
 
         # Base Data Object
@@ -257,8 +271,6 @@ def query_sqlite(term):
             if f_row[1] in ENABLED_DICTIONARIES:
                 data["freq"] = f_row[0]
                 break
-
-        conn.close()
 
         # 4. Group Meanings and Collect Readings
         dict_groups = {}

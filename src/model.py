@@ -1,14 +1,32 @@
+import os
+import tempfile
 import cv2
 import numpy as np
-from manga_ocr import MangaOcr
 from janome.tokenizer import Tokenizer
 from PIL import Image, ImageOps, ImageEnhance
 
-print("Booting up Simple JP Reader...")
-mocr = MangaOcr()
-tokenizer = Tokenizer()
+_mocr = None
+_tokenizer = None
+
+def get_tokenizer():
+    """Returns a shared Janome Tokenizer instance (singleton)."""
+    global _tokenizer
+    if _tokenizer is None:
+        _tokenizer = Tokenizer()
+    return _tokenizer
+
+def get_ocr_engine():
+    """Lazily loads and returns the MangaOcr engine instance."""
+    global _mocr
+    if _mocr is None:
+        print("[OCR] Loading MangaOCR model (first-time init)...")
+        from manga_ocr import MangaOcr
+        _mocr = MangaOcr()
+        print("[OCR] MangaOCR loaded successfully.")
+    return _mocr
 
 def tokenize_sentence(text):
+    tokenizer = get_tokenizer()
     tokens = tokenizer.tokenize(text)
     word_data = []
     
@@ -61,19 +79,42 @@ def preprocess_image(pil_img, extract_color_range=None):
 
     return Image.fromarray(denoised)
 
-def extract_words(img, color_range=None):
-    print("Processing via AI...")
-    
+def run_windows_native_ocr(img):
+    """Performs fast OCR using Windows built-in Japanese OCR engine."""
+    try:
+        import winocr
+        res = winocr.recognize_pil_sync(img, 'ja')
+        if isinstance(res, dict):
+            raw_text = res.get("text", "")
+            return raw_text.replace(" ", "")
+        return ""
+    except Exception as e:
+        print(f"[OCR] Windows Native OCR error ({e}), falling back to MangaOCR...")
+        ocr = get_ocr_engine()
+        return ocr(img)
+
+def extract_words(img, color_range=None, engine="manga_ocr"):
     # OpenCV Preprocessing
     img = preprocess_image(img, extract_color_range=color_range)
 
     # Dynamic Padding
     img = ImageOps.expand(img, border=30, fill='white')
 
-    img.save("debug_preprocessed_snip.png")
+    debug_path = os.path.join(tempfile.gettempdir(), "debug_preprocessed_snip.png")
+    try:
+        img.save(debug_path)
+    except Exception:
+        pass
     
     # OCR Recognition
-    text = mocr(img)
+    if engine == "windows_native":
+        print("[OCR] Processing via Windows Native OCR...")
+        text = run_windows_native_ocr(img)
+    else:
+        print("[OCR] Processing via MangaOCR...")
+        ocr = get_ocr_engine()
+        text = ocr(img)
+
     print(f"Raw OCR Output: {text}")
     
     return tokenize_sentence(text)

@@ -16,6 +16,7 @@ import os
 import json
 import cv2
 import numpy as np
+
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
 
 DEFAULT_SETTINGS = {
@@ -38,6 +39,12 @@ DEFAULT_SETTINGS = {
     "anki_model": "Basic",
     "anki_field_map": {},
     "anki_custom_css": ".sjr-dictionary ul {\n    list-style-type: none;\n    padding-left: 0;\n    margin: 0;\n}\n.sjr-dictionary li {\n    margin-bottom: 4px;\n}\n.sjr-dictionary b {\n    color: #3B82F6;\n}",
+    "enable_quick_snip": True,
+    "quick_snip_hotkey": "Alt",
+    "enable_manual_snip": True,
+    "manual_snip_hotkey": "Ctrl+Alt",
+    "minimize_to_tray": True,
+    "active_ocr_engine": "manga_ocr",
 }
 
 def load_settings():
@@ -46,7 +53,7 @@ def load_settings():
             with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
                 loaded = json.load(f)
                 merged = DEFAULT_SETTINGS.copy()
-                merged.update(loaded) # will overwrite default with saved data
+                merged.update(loaded)
                 return merged
         except Exception as e:
             print(f"Error loading config: {e}")
@@ -70,20 +77,144 @@ class SignalManager(QObject):
 
 signals = SignalManager()
 
+# --- WORKER THREADS (NON-BLOCKING) ---
+
 class OCRWorker(QThread):
     finished = pyqtSignal(list)
     error = pyqtSignal(str)
 
-    def __init__(self, img):
+    def __init__(self, img, engine="manga_ocr"):
         super().__init__()
         self.img = img
+        self.engine = engine
 
     def run(self):
         try:
-            token_list = extract_words(self.img)
+            token_list = extract_words(self.img, engine=self.engine)
             self.finished.emit(token_list)
         except Exception as e:
             self.error.emit(str(e))
+
+class AnkiCheckWorker(QThread):
+    exists = pyqtSignal(bool)
+
+    def __init__(self, deck_name, term, base_form=None, custom_map=None):
+        super().__init__()
+        self.deck_name = deck_name
+        self.term = term
+        self.base_form = base_form
+        self.custom_map = custom_map or {}
+
+    def run(self):
+        try:
+            from anki_export import check_card_exists
+            res = check_card_exists(
+                deck_name=self.deck_name,
+                term=self.term,
+                base_form=self.base_form,
+                custom_map=self.custom_map
+            )
+            self.exists.emit(res)
+        except Exception:
+            self.exists.emit(False)
+
+class AIFixWorker(QThread):
+    finished = pyqtSignal(str)
+    error = pyqtSignal(str)
+
+    def __init__(self, image_path, current_text, engine, api_key, base_url, vision_model):
+        super().__init__()
+        self.image_path = image_path
+        self.current_text = current_text
+        self.engine = engine
+        self.api_key = api_key
+        self.base_url = base_url
+        self.vision_model = vision_model
+
+    def run(self):
+        try:
+            res = fix_japanese_ocr(
+                self.image_path,
+                self.current_text,
+                engine=self.engine,
+                api_key=self.api_key,
+                base_url=self.base_url,
+                vision_model=self.vision_model
+            )
+            self.finished.emit(res)
+        except Exception as e:
+            self.error.emit(str(e))
+
+class TranslationWorker(QThread):
+    finished = pyqtSignal(str)
+    error = pyqtSignal(str)
+
+    def __init__(self, text, engine, api_key, base_url, text_model):
+        super().__init__()
+        self.text = text
+        self.engine = engine
+        self.api_key = api_key
+        self.base_url = base_url
+        self.text_model = text_model
+
+    def run(self):
+        try:
+            res = translate_text(
+                self.text,
+                engine=self.engine,
+                api_key=self.api_key,
+                base_url=self.base_url,
+                text_model=self.text_model
+            )
+            self.finished.emit(res)
+        except Exception as e:
+            self.error.emit(str(e))
+
+class DictLookupWorker(QThread):
+    finished = pyqtSignal(dict)
+
+    def __init__(self, base_form, fallback_term):
+        super().__init__()
+        self.base_form = base_form
+        self.fallback_term = fallback_term
+
+    def run(self):
+        try:
+            data = get_real_data(self.base_form, fallback_term=self.fallback_term)
+            self.finished.emit(data or {})
+        except Exception:
+            self.finished.emit({})
+
+class AnkiCardWorker(QThread):
+    finished = pyqtSignal(object)
+
+    def __init__(self, deck, model, term, reading, definition, sentence, image_path, field_map):
+        super().__init__()
+        self.deck = deck
+        self.model = model
+        self.term = term
+        self.reading = reading
+        self.definition = definition
+        self.sentence = sentence
+        self.image_path = image_path
+        self.field_map = field_map
+
+    def run(self):
+        try:
+            res = add_anki_card(
+                deck_name=self.deck,
+                model_name=self.model,
+                term=self.term,
+                reading=self.reading,
+                definition=self.definition,
+                sentence=self.sentence,
+                image_path=self.image_path,
+                custom_map=self.field_map
+            )
+            self.finished.emit(res)
+        except Exception as e:
+            self.finished.emit({"error": str(e)})
+
 
 # --- EXPANDABLE WORD COMPONENT ---
 class ExpandableWordWidget(QWidget):
@@ -92,6 +223,7 @@ class ExpandableWordWidget(QWidget):
         self.surface = token_info["surface"]
         self.base_form = token_info["base_form"]
         self.data_fetched = False
+        self.cached_dict_data = {}
 
         self.layout = QVBoxLayout()
         self.layout.setContentsMargins(0, 5, 0, 5)
@@ -142,12 +274,8 @@ class ExpandableWordWidget(QWidget):
 
         self.btn_toggle = QPushButton("v")
         self.btn_toggle.setFixedSize(24, 24)
-
-        self.btn_toggle = QPushButton("v")
-        self.btn_toggle.setFixedSize(24, 24)
         self.btn_toggle.setStyleSheet("background: transparent; color: #9CA3AF; font-weight: bold; font-size: 16px; border: none;")
         self.btn_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
-        
         self.btn_toggle.clicked.connect(self.toggle)
         self.header_layout.addWidget(self.btn_toggle)
         
@@ -170,17 +298,64 @@ class ExpandableWordWidget(QWidget):
         self.layout.addWidget(self.sep)
 
         self.fetch_data()
+        self.check_anki_duplicate()
+
+    def check_anki_duplicate(self):
+        deck = USER_SETTINGS.get("anki_deck", "Default")
+        field_map = USER_SETTINGS.get("anki_field_map", {})
+        self.anki_check_worker = AnkiCheckWorker(
+            deck_name=deck,
+            term=self.surface,
+            base_form=self.base_form,
+            custom_map=field_map
+        )
+        self.anki_check_worker.exists.connect(self.on_anki_check_result)
+        self.anki_check_worker.start()
+
+    def on_anki_check_result(self, exists):
+        if exists:
+            self.btn_anki.setText("★")
+            self.btn_anki.setToolTip("Word already in Anki deck (Click to re-export)")
+            self.btn_anki.setStyleSheet("""
+                QPushButton { 
+                    background-color: rgba(245, 158, 11, 0.2); 
+                    color: #F59E0B; 
+                    font-weight: bold; 
+                    font-size: 16px; 
+                    border-radius: 4px; 
+                    border: 1px solid #F59E0B;
+                    padding: 0px 0px 4px 0px;
+                    text-align: center; 
+                }
+                QPushButton:hover { 
+                    background-color: #F59E0B; 
+                    color: white; 
+                }
+            """)
+        else:
+            self.btn_anki.setText("+")
+            self.btn_anki.setToolTip("Export card to Anki")
+            self.btn_anki.setStyleSheet("""
+                QPushButton { 
+                    background-color: rgba(59, 130, 246, 0.2); 
+                    color: #60A5FA; 
+                    font-weight: bold; 
+                    font-size: 16px; 
+                    border-radius: 4px; 
+                    border: 1px solid #3B82F6;
+                    padding: 0px 0px 6px 1px;
+                    text-align: center; 
+                }
+                QPushButton:hover { 
+                    background-color: #3B82F6; 
+                    color: white; 
+                }
+            """)
 
     def export_to_anki(self):
         import re
 
-        if not self.data_fetched:
-            self.fetch_data()
-
-        overlay = self.window()
-        sentence_context = overlay.lbl_sentence.text() if hasattr(overlay, 'lbl_sentence') else ""
-        
-        data = get_real_data(self.base_form, fallback_term=self.surface)
+        data = self.cached_dict_data if self.cached_dict_data else get_real_data(self.base_form, fallback_term=self.surface)
         reading = data.get("pitch", self.surface)
         
         definition_html = ""
@@ -202,17 +377,27 @@ class ExpandableWordWidget(QWidget):
         image_path = "temp_snip.png" if os.path.exists("temp_snip.png") else None
         field_map = USER_SETTINGS.get("anki_field_map", {})
 
-        res = add_anki_card(
-            deck_name=deck,
-            model_name=model,
+        overlay = self.window()
+        sentence_context = overlay.lbl_sentence.text() if hasattr(overlay, 'lbl_sentence') else ""
+
+        self.btn_anki.setEnabled(False)
+        self.btn_anki.setText("...")
+
+        self.anki_worker = AnkiCardWorker(
+            deck=deck,
+            model=model,
             term=self.surface,
             reading=reading,
             definition=wrapped_html,
             sentence=sentence_context,
             image_path=image_path,
-            custom_map=field_map
+            field_map=field_map
         )
+        self.anki_worker.finished.connect(self.on_anki_exported)
+        self.anki_worker.start()
 
+    def on_anki_exported(self, res):
+        self.btn_anki.setEnabled(True)
         if isinstance(res, dict) and "error" in res:
             print(f"[Anki] Error: {res['error']}")
             self.btn_anki.setText("✕")
@@ -227,6 +412,7 @@ class ExpandableWordWidget(QWidget):
 
     def reset_anki_btn(self):
         self.btn_anki.setText("+")
+        self.btn_anki.setToolTip("Export card to Anki")
         self.btn_anki.setStyleSheet("""
             QPushButton { 
                 background-color: rgba(59, 130, 246, 0.2); 
@@ -235,12 +421,15 @@ class ExpandableWordWidget(QWidget):
                 font-size: 16px; 
                 border-radius: 4px; 
                 border: 1px solid #3B82F6; 
+                padding: 0px 0px 6px 1px;
+                text-align: center;
             }
             QPushButton:hover { 
                 background-color: #3B82F6; 
                 color: white; 
             }
         """)
+        self.check_anki_duplicate()
 
     def update_word(self):
         new_text = self.edit_word.text().strip()
@@ -250,8 +439,11 @@ class ExpandableWordWidget(QWidget):
             return
 
         self.surface = new_text
-        self.base_form = new_text # assume manual edits are dict form
+        self.base_form = new_text
         self.data_fetched = False
+        self.cached_dict_data = {}
+
+        self.check_anki_duplicate()
 
         if self.lbl_lemma:
             self.lbl_lemma.hide()
@@ -285,16 +477,50 @@ class ExpandableWordWidget(QWidget):
             self.btn_toggle.setText("^")
             
             if not self.data_fetched:
-                QApplication.processEvents() 
                 self.fetch_data()
         else:
             self.content_widget.hide()
             self.btn_toggle.setText("v")
 
     def fetch_data(self):
-        data = get_real_data(self.base_form, fallback_term=self.surface)
+        if self.data_fetched:
+            return
+        self.dict_worker = DictLookupWorker(self.base_form, self.surface)
+        self.dict_worker.finished.connect(self.on_dict_loaded)
+        self.dict_worker.start()
+
+    def on_dict_loaded(self, data):
+        self.data_fetched = True
+        self.cached_dict_data = data
+
         if self.lbl_loading:
             self.lbl_loading.deleteLater()
+            self.lbl_loading = None
+
+        # Yomitan-style hover preview tooltip
+        reading_disp = data.get("pitch", "")
+        meaning_snippet = ""
+        if "meanings_list" in data and data["meanings_list"]:
+            first_m = data["meanings_list"][0].get("html_content", "")
+            import re
+            clean_snippet = re.sub(r'<[^>]+>', ' ', first_m).strip()
+            if len(clean_snippet) > 120:
+                clean_snippet = clean_snippet[:117] + "..."
+            meaning_snippet = clean_snippet
+        elif "meaning" in data:
+            meaning_snippet = data["meaning"]
+            if len(meaning_snippet) > 120:
+                meaning_snippet = meaning_snippet[:117] + "..."
+
+        hover_tip = f"<b>{self.surface}</b>"
+        if reading_disp and reading_disp != "???":
+            hover_tip += f" [{reading_disp}]"
+        if meaning_snippet:
+            hover_tip += f"<br><span style='color: #D1D5DB;'>{meaning_snippet}</span>"
+
+        self.edit_word.setToolTip(hover_tip)
+        if self.lbl_lemma:
+            self.lbl_lemma.setToolTip(hover_tip)
 
         # pitch accent
         if hasattr(self, 'pitch_graph'):
@@ -316,19 +542,15 @@ class ExpandableWordWidget(QWidget):
 
         # metadata
         meta_badges = []
-        
-        # text
         reading_text = data.get('pitch', '').strip()
         if reading_text and reading_text != "???":
             meta_badges.append(f"Reading: {reading_text}")
 
-        # freq tag
         if USER_SETTINGS.get("show_freq", True):
             freq_val = data.get("freq")
             if freq_val:
                 meta_badges.append(f"Freq: {freq_val}")
 
-        # jlpt tag
         if USER_SETTINGS.get("show_jlpt", True):
             jlpt_val = data.get("jlpt")
             if jlpt_val:
@@ -362,7 +584,6 @@ class ExpandableWordWidget(QWidget):
                 lbl_mean.setWordWrap(True)
                 self.content_layout.addWidget(lbl_mean)
 
-        self.data_fetched = True
 
 # --- EDITABLE TEXT ---
 class EditableWord(QLineEdit):
@@ -383,7 +604,7 @@ class EditableWord(QLineEdit):
                 font-weight: bold;
                 padding: 0px;
             }
-            QLineEdit: focus {
+            QLineEdit:focus {
                 background: rgba(255, 255, 255, 0.1);
                 border: 1px solid #666;
                 border-radius: 3px;
@@ -402,13 +623,14 @@ class EditableWord(QLineEdit):
         width = metrics.horizontalAdvance(text) + 30
         self.setFixedWidth(width)
 
+
 # --- VERTICAL OVERLAY (INFO BOX) ---
 class ResultOverlay(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
         
-        self.setMinimumSize(300,150)
+        self.setMinimumSize(300, 150)
 
         self.setObjectName("MainBackground")
         self.setStyleSheet("""
@@ -419,10 +641,7 @@ class ResultOverlay(QWidget):
             }
         """)
         
-        # self.setFixedWidth(320)
-        # self.setMaximumHeight(450)
         self.layout = QVBoxLayout()
-        # self.layout.setContentsMargins(0, 0, 0, 0)
         self.setLayout(self.layout)
 
         self.top_bar = QHBoxLayout()
@@ -430,7 +649,7 @@ class ResultOverlay(QWidget):
 
         self.btn_close = QPushButton("X")
         self.btn_close.setFixedSize(20, 20)
-        self.btn_close.setStyleSheet("color: white; border-radius: 10px; font-weight: bold; border: none;") # red circle -> background: #EF4444; 
+        self.btn_close.setStyleSheet("color: white; border-radius: 10px; font-weight: bold; border: none;")
         self.btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_close.clicked.connect(self.hide)
         self.top_bar.addStretch()
@@ -477,14 +696,12 @@ class ResultOverlay(QWidget):
         self.btn_ai_fix.clicked.connect(self.run_ai_fix)
         self.grip_layout.addWidget(self.btn_ai_fix, 0, Qt.AlignmentFlag.AlignBottom)
 
-
         self.btn_translate = QPushButton("Aあ")
         self.btn_translate.setFixedSize(30, 20)
         self.btn_translate.setStyleSheet("background: transparent; color: #9CA3AF; font-weight: bold; font-size: 14px; border: none;")
         self.btn_translate.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_translate.clicked.connect(self.run_translation)
         self.grip_layout.addWidget(self.btn_translate, 0, Qt.AlignmentFlag.AlignBottom)
-
 
         self.grip_layout.addStretch()
 
@@ -503,13 +720,37 @@ class ResultOverlay(QWidget):
         if not full_text:
             return
 
-        self.lbl_sentence.setText("✨...")
-        self.lbl_sentence.setStyleSheet("font-size: 16px; color: #FBBF24; font-weight: bold; border: none; font-style: italic;")
-        QApplication.processEvents()
+        self.btn_ai_fix.setEnabled(False)
+        self.btn_ai_fix.setText("✨...")
 
-        api_key = USER_SETTINGS.get("gemini_api_key", "")
-        fixed_text = fix_japanese_ocr("temp_snip.png", full_text, api_key=api_key)
-        
+        engine = USER_SETTINGS.get("ai_engine", "google")
+        api_key = USER_SETTINGS.get("global_api_key") or USER_SETTINGS.get("gemini_api_key") or USER_SETTINGS.get("nvidia_api_key") or ""
+        base_url = USER_SETTINGS.get("local_base_url", "")
+        vision_model = USER_SETTINGS.get("vision_model", "")
+
+        self.ai_worker = AIFixWorker(
+            image_path="temp_snip.png",
+            current_text=full_text,
+            engine=engine,
+            api_key=api_key,
+            base_url=base_url,
+            vision_model=vision_model
+        )
+        self.ai_worker.finished.connect(lambda res: self.on_ai_fix_finished(res, full_text))
+        self.ai_worker.error.connect(lambda err: self.on_ai_fix_error(err))
+        self.ai_worker.start()
+
+    def on_ai_fix_finished(self, fixed_text, original_text):
+        self.btn_ai_fix.setEnabled(True)
+        self.btn_ai_fix.setText("✨")
+
+        if fixed_text.startswith("Error:") or "Error" in fixed_text:
+            print(f"[AI Fix] {fixed_text}")
+            self.lbl_translation.setText(fixed_text)
+            self.lbl_translation.show()
+            self.adjustSize()
+            return
+
         self.lbl_sentence.setText(fixed_text)
         self.lbl_sentence.setStyleSheet("font-size: 16px; color: #60A5FA; font-weight: bold; border: none;")
 
@@ -531,6 +772,13 @@ class ResultOverlay(QWidget):
 
         self.adjustSize()
 
+    def on_ai_fix_error(self, err_msg):
+        self.btn_ai_fix.setEnabled(True)
+        self.btn_ai_fix.setText("✨")
+        self.lbl_translation.setText(f"AI Fix Failed: {err_msg}")
+        self.lbl_translation.show()
+        self.adjustSize()
+
     def run_translation(self):
         full_text = self.lbl_sentence.text().strip()
         if not full_text:
@@ -538,19 +786,32 @@ class ResultOverlay(QWidget):
 
         self.lbl_translation.setText("Translating...")
         self.lbl_translation.show()
-        QApplication.processEvents()
+        self.btn_translate.setEnabled(False)
 
-        engine = USER_SETTINGS.get("translation_engine", "google")
-        if engine == "deepl":
-            api_key = USER_SETTINGS.get("deepl_api_key", "")
-        elif engine == "nvidia":
-            api_key = USER_SETTINGS.get("nvidia_api_key", "")
-        else:
-            api_key = ""
+        engine = USER_SETTINGS.get("ai_engine", USER_SETTINGS.get("translation_engine", "google"))
+        api_key = USER_SETTINGS.get("global_api_key") or USER_SETTINGS.get("nvidia_api_key") or USER_SETTINGS.get("deepl_api_key") or ""
+        base_url = USER_SETTINGS.get("local_base_url", "")
+        text_model = USER_SETTINGS.get("text_model", "")
 
-        english_text = translate_text(full_text, engine=engine, api_key=api_key)
+        self.trans_worker = TranslationWorker(
+            text=full_text,
+            engine=engine,
+            api_key=api_key,
+            base_url=base_url,
+            text_model=text_model
+        )
+        self.trans_worker.finished.connect(self.on_translation_finished)
+        self.trans_worker.error.connect(self.on_translation_error)
+        self.trans_worker.start()
 
+    def on_translation_finished(self, english_text):
+        self.btn_translate.setEnabled(True)
         self.lbl_translation.setText(english_text)
+        self.adjustSize()
+
+    def on_translation_error(self, err_msg):
+        self.btn_translate.setEnabled(True)
+        self.lbl_translation.setText(f"Translation Error: {err_msg}")
         self.adjustSize()
 
     def display_words(self, token_list, x, y):
@@ -623,6 +884,7 @@ class ResultOverlay(QWidget):
             self._is_dragging = False
             event.accept()
 
+
 # --- PITCH GRAPH ---
 class PitchGraphWidget(QWidget):
     def __init__(self, word, pitch_drop):
@@ -682,7 +944,6 @@ class PitchGraphWidget(QWidget):
             x = start_x + (i * self.spacing)
             points.append(QPoint(x, y))
 
-        # lines config
         pen = QPen(QColor(96, 165, 250))
         pen.setWidth(2)
         painter.setPen(pen)
@@ -690,10 +951,10 @@ class PitchGraphWidget(QWidget):
         for i in range(len(points) - 1):
             painter.drawLine(points[i], points[i+1])
 
-        # dots config
         painter.setBrush(QColor(20, 20, 25))
         for p in points:
             painter.drawEllipse(p, radius, radius)
+
 
 # --- SNIPPING CAMERA ---
 class SnippingWidget(QWidget):
@@ -705,7 +966,7 @@ class SnippingWidget(QWidget):
         self.setCursor(Qt.CursorShape.CrossCursor)
 
         self.is_manual_mode = False
-        self.state = "HIDDEN" # hidden, dragging, adjusting
+        self.state = "HIDDEN"
 
         self.start_point = QPoint()
         self.end_point = QPoint()
@@ -847,9 +1108,8 @@ class SnippingWidget(QWidget):
 
             painter.setClipPath(path)
             painter.drawPixmap(self.rect(), self.frozen_pixmap)
-            painter.setClipping(False) # turn off clipping to draw box
+            painter.setClipping(False)
 
-        # blue borders and grab handles
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
         pen = QPen(QColor(59, 130, 246))
         pen.setWidth(2)
@@ -868,20 +1128,23 @@ class SnippingWidget(QWidget):
         from PIL import Image
         
         rect = polygon.boundingRect()
-        # ignore accidental single clicks
         if rect.width() < 10 or rect.height() < 10:
             print("Snip too small, aborting.")
             return
             
         img_h, img_w = self.frozen_img_cv.shape[:2]
-        top = max(0, rect.top())
-        bottom = min(img_h, rect.bottom())
-        left = max(0, rect.left())
-        right = min(img_w, rect.right())
+        
+        # Calculate DPI scaling ratio between Qt widget logical coordinates and image resolution
+        scale_x = img_w / max(1, self.width())
+        scale_y = img_h / max(1, self.height())
+
+        top = max(0, int(rect.top() * scale_y))
+        bottom = min(img_h, int(rect.bottom() * scale_y))
+        left = max(0, int(rect.left() * scale_x))
+        right = min(img_w, int(rect.right() * scale_x))
         
         cropped_cv = self.frozen_img_cv[top:bottom, left:right]
         
-        # ensure the crop actually contains pixel data
         if cropped_cv.size == 0:
             print("Cropped image is empty, aborting.")
             return
@@ -889,7 +1152,7 @@ class SnippingWidget(QWidget):
         pts = []
         for i in range(4):
             pt = polygon.at(i)
-            pts.append([pt.x() - left, pt.y() - top]) 
+            pts.append([pt.x() * scale_x - left, pt.y() * scale_y - top]) 
         
         src_pts = np.array(pts, dtype="float32")
         
@@ -912,7 +1175,8 @@ class SnippingWidget(QWidget):
         final_img = Image.fromarray(cv2.cvtColor(warped, cv2.COLOR_BGR2RGB))
         final_img.save("temp_snip.png")
         
-        self.ocr_thread = OCRWorker(final_img)
+        active_engine = USER_SETTINGS.get("active_ocr_engine", "manga_ocr")
+        self.ocr_thread = OCRWorker(final_img, engine=active_engine)
         self.ocr_thread.finished.connect(lambda tokens: self.on_ocr_complete(tokens, int(x), int(y)))
         self.ocr_thread.error.connect(lambda e: print(f"\n[CRASH LOG] OCR Failed: {e}\n"))
         self.ocr_thread.start()
@@ -920,5 +1184,5 @@ class SnippingWidget(QWidget):
     def on_ocr_complete(self, token_list, x, y):
         if token_list:
             signals.show_results.emit(token_list, x, y)
-            full_text = "". join([t["surface"] for t in token_list])
+            full_text = "".join([t["surface"] for t in token_list])
             signals.update_history.emit(full_text)

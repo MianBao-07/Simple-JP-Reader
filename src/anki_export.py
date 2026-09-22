@@ -1,17 +1,16 @@
 import os
+import re
 import base64
 import requests
 import time
-from janome.tokenizer import Tokenizer
+from model import get_tokenizer
 
 ANKI_URL = "http://127.0.0.1:8765"
 
-# Initialize Janome once for lightning-fast tokenization
-janome_tokenizer = Tokenizer()
-
 def generate_html_ruby(text):
     """Generates standard HTML ruby tags with smart Okurigana separation."""
-    tokens = janome_tokenizer.tokenize(text)
+    tokenizer = get_tokenizer()
+    tokens = tokenizer.tokenize(text)
     result = ""
     for token in tokens:
         surface = token.surface
@@ -96,6 +95,84 @@ def get_deck_names():
 def get_model_names():
     res = invoke("modelNames")
     return [] if isinstance(res, dict) and "error" in res else res
+
+def clean_term(html_val):
+    if not html_val:
+        return ""
+    # Strip HTML ruby pronunciation (<rt>...</rt>) first
+    text = re.sub(r'<rt>.*?</rt>', '', html_val, flags=re.DOTALL)
+    # Strip all remaining HTML tags
+    text = re.sub(r'<[^>]+>', '', text)
+    # Strip bracket furigana e.g. 見[み]え -> 見え
+    text = re.sub(r'\[[^\]]+\]', '', text)
+    # Remove HTML entities like &nbsp;
+    text = text.replace('&nbsp;', ' ').strip()
+    return text
+
+def check_card_exists(deck_name, term, base_form=None, custom_map=None):
+    """
+    Checks whether a note specifically targeting the term/base_form already exists in the deck.
+    Only matches against target vocabulary fields, preventing false positives from context sentences or definitions.
+    """
+    if not term and not base_form:
+        return False
+
+    terms = list(dict.fromkeys([t for t in (term, base_form) if t]))
+    custom_map = custom_map or {}
+    term_field = custom_map.get("term") or custom_map.get("word")
+
+    candidate_ids = set()
+    for t in terms:
+        # Build wildcard query (e.g., *見*え* to match across potential ruby tags in the field)
+        w = "*" + "*".join(list(t)) + "*"
+        if term_field:
+            query = f'deck:"{deck_name}" "{term_field}:{w}"' if deck_name else f'"{term_field}:{w}"'
+        else:
+            query = f'deck:"{deck_name}" "{w}"' if deck_name else f'"{w}"'
+        res = invoke("findNotes", query=query)
+        if isinstance(res, list):
+            candidate_ids.update(res)
+
+    if not candidate_ids:
+        return False
+
+    # Fetch candidate notes to inspect their actual field contents
+    notes = invoke("notesInfo", notes=list(candidate_ids))
+    if not isinstance(notes, list):
+        return False
+
+    common_term_fields = [
+        "VocabWord", "Expression", "Word", "Vocabulary-Kanji",
+        "Vocabulary", "Kanji", "Japanese", "Front", "Term", "Text"
+    ]
+
+    for note in notes:
+        fields = note.get("fields", {})
+        # If user mapped a specific term field, check that field
+        if term_field and term_field in fields:
+            val = clean_term(fields[term_field].get("value", ""))
+            if any(val == t for t in terms):
+                return True
+        else:
+            # Check likely term fields
+            checked_any = False
+            for fname in common_term_fields:
+                if fname in fields:
+                    checked_any = True
+                    val = clean_term(fields[fname].get("value", ""))
+                    if any(val == t for t in terms):
+                        return True
+            # If none of the common field names existed on this note,
+            # inspect non-sentence / non-definition fields as fallback
+            if not checked_any:
+                for fname, fobj in fields.items():
+                    if any(skip in fname.lower() for skip in ("sentence", "context", "meaning", "definition", "glossary", "dialogue", "image", "screenshot", "audio", "sound")):
+                        continue
+                    val = clean_term(fobj.get("value", ""))
+                    if any(val == t for t in terms):
+                        return True
+
+    return False
 
 def add_anki_card(deck_name, model_name, term, reading, definition, sentence, image_path=None, custom_map=None):
     if custom_map is None:

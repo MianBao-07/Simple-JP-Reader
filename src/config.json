@@ -1,10 +1,10 @@
 {
-    "show_pitch": true,
+    "show_pitch": false,
     "show_freq": false,
     "show_jlpt": true,
     "show_meaning": true,
     "enable_translation": true,
-    "translation_engine": "nvidia",
+    "translation_engine": "google",
     "deepl_api_key": "",
     "nvidia_api_key": "",
     "ai_engine": "google",

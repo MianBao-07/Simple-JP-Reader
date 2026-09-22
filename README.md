@@ -32,16 +32,33 @@ After experimenting with a handful of Japanese-learning apps myself, I dedicated
 
 ## how the program improves ocr reading
 
-Raw game screenshots, visual novel text boxes, and manga panels frequently fail when fed directly into standard OCR engines due to low resolutions, complex background textures, transparent text boxes, color clashing, and perspective distortion.
+Raw game screenshots, video subtitles, and manga panels frequently fail when fed directly into standard OCR tools (such as ShareX, default Tesseract, or Windows OCR). Stylized color fills, decorative white stroke borders, complex background textures, and gradient lighting easily break character recognition.
 
-Simple-JP-Reader runs every snip through an automated multi-stage image processing pipeline before feeding it to MangaOCR:
+### real-world comparison: sharex vs. simple-jp-reader
+
+The sample below is a screen snip containing stylized orange Japanese subtitles with a thick white border over a dark, textured clothing background (`それでここを選びました`):
+
+![Sample Input Snip](assets/ocr_sample_input.png)
+
+| ShareX (Optical Character Recognition) | Simple-JP-Reader (Automated Preprocessing + MangaOCR) |
+| :---: | :---: |
+| ![ShareX OCR Result](assets/ocr_comparison_sharex.png) | ![Simple-JP-Reader Result](assets/ocr_comparison_simplejp.png) |
+| **Output:** `れで33を進参ました` <br> *(Failed: dropped first character, misread `ここ` as `33`, misread `選び` as `進参`)* | **Output:** `それでここを選びました` <br> *(100% accurate: extracted full text, deconjugated verbs, loaded dictionary definitions)* |
+
+Standard OCR engines treat white outlines and colored text fills as foreground interference, confusing character strokes with surrounding pixel artifacts. Simple-JP-Reader isolates character polarity, equalizes local contrast, and pads boundaries before recognition.
+
+### automated preprocessing pipeline
+
+Every screen capture automatically runs through an OpenCV image transformation pipeline before inference:
+
+![Automated Preprocessing Pipeline](assets/ocr_preprocessing_pipeline.png)
 
 1. **Perspective Correction & Warping:**
    In manual snip mode, the four corner points you adjust are transformed using OpenCV perspective transform (`getPerspectiveTransform` and `warpPerspective`) into a flattened rectangular image, eliminating slanted or angled text distortion.
 2. **High-DPI Coordinate Normalization:**
    Screen captures are automatically mapped between Qt's logical interface coordinates and physical display pixels, ensuring snips taken on 125%, 150%, or 200% Windows display scaling are not offset or cropped incorrectly.
 3. **Bicubic Upscaling (2.5x):**
-   Small text in games and manga often lacks stroke definition for intricate kanji. The cropped image is upscaled by 2.5x using bicubic interpolation to widen character gaps and clarify individual kanji strokes.
+   Small text in games and video subtitles often lacks stroke separation for intricate kanji. The cropped image is upscaled by 2.5x using bicubic interpolation to widen character gaps and clarify individual kanji radicals.
 4. **Automatic Polarity Inversion:**
    MangaOCR works best on dark text over light backgrounds. The pipeline samples the perimeter border pixels of the snip to estimate the average background brightness. If the background is dark (average brightness < 127), the image is inverted automatically so that light text on dark backgrounds becomes readable black-on-white text.
 5. **Contrast Limited Adaptive Histogram Equalization (CLAHE):**

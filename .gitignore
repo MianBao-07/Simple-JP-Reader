@@ -19,6 +19,9 @@ temp_snip.png
 debug_preprocessed_snip.png
 snip_test.png
 
+# Repository documentation assets
+!assets/*.png
+
 # Databases
 *.db
 src/dictionary.db

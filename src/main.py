@@ -843,11 +843,6 @@ class ControlPanel(QWidget):
         form_snip.addRow(self.chk_enable_manual_snip)
         form_snip.addRow("Manual Snip Keybind:", self.combo_manual_snip_key)
 
-        # Tray toggle
-        self.chk_minimize_to_tray = QCheckBox("Minimize to System Tray on close")
-        self.chk_minimize_to_tray.setChecked(USER_SETTINGS.get("minimize_to_tray", True))
-        form_snip.addRow(self.chk_minimize_to_tray)
-
         group_snip.setLayout(form_snip)
         content_layout.addWidget(group_snip) 
 
@@ -948,6 +943,23 @@ class ControlPanel(QWidget):
         
         group_app.setLayout(form_app)
         content_layout.addWidget(group_app) 
+
+        # --- System & Window Behavior ---
+        group_system = QGroupBox("System & Window Behavior")
+        l_system = QVBoxLayout()
+
+        self.chk_minimize_to_tray = QCheckBox("Minimize to System Tray / Taskbar on close")
+        self.chk_minimize_to_tray.setChecked(USER_SETTINGS.get("minimize_to_tray", True))
+        self.chk_minimize_to_tray.toggled.connect(self.save_settings)
+
+        lbl_tray_hint = QLabel("Disable this if you want the close button (X) to fully exit the application instead of running in the background.")
+        lbl_tray_hint.setStyleSheet("font-size: 11px; color: #9CA3AF; margin-left: 22px; margin-bottom: 5px;")
+        lbl_tray_hint.setWordWrap(True)
+
+        l_system.addWidget(self.chk_minimize_to_tray)
+        l_system.addWidget(lbl_tray_hint)
+        group_system.setLayout(l_system)
+        content_layout.addWidget(group_system)
 
         content_layout.addStretch()
 
@@ -1054,10 +1066,15 @@ class ControlPanel(QWidget):
                 self.show_and_activate()
 
     def quit_application(self):
-        self.keyboard_listener.stop()
+        try:
+            self.keyboard_listener.stop()
+        except Exception:
+            pass
         if hasattr(self, 'tray_icon'):
             self.tray_icon.hide()
         QApplication.quit()
+        import os
+        os._exit(0)
 
     def closeEvent(self, event):
         if USER_SETTINGS.get("minimize_to_tray", True):

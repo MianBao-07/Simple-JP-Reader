@@ -446,6 +446,32 @@ class TestUIAndWidgetsBrutal(unittest.TestCase):
         # Non-matching
         self.assertFalse(main.matches_hotkey("Ctrl", keyboard.Key.alt))
 
+    def test_minimize_to_tray_close_event_behavior(self):
+        import main
+        from PyQt6.QtGui import QCloseEvent
+        from ui import USER_SETTINGS
+        
+        # Test 1: When minimize_to_tray is True, closeEvent ignores and hides
+        USER_SETTINGS["minimize_to_tray"] = True
+        panel = main.ControlPanel(None)
+        close_ev = QCloseEvent()
+        panel.closeEvent(close_ev)
+        self.assertFalse(close_ev.isAccepted())
+        panel.startup_worker.wait()
+        
+        # Test 2: When minimize_to_tray is False, closeEvent accepts and triggers quit
+        USER_SETTINGS["minimize_to_tray"] = False
+        panel2 = main.ControlPanel(None)
+        quit_called = []
+        panel2.quit_application = lambda: quit_called.append(True)
+        close_ev2 = QCloseEvent()
+        panel2.closeEvent(close_ev2)
+        self.assertTrue(close_ev2.isAccepted())
+        self.assertTrue(len(quit_called) > 0)
+        panel2.startup_worker.wait()
+        
+        USER_SETTINGS["minimize_to_tray"] = False
+
 
 class TestConcurrentAndFuzzBrutal(unittest.TestCase):
     def test_concurrent_database_lookups(self):

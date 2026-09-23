@@ -184,6 +184,9 @@ class DictLookupWorker(QThread):
             self.finished.emit(data or {})
         except Exception:
             self.finished.emit({})
+        finally:
+            from dictionary import close_thread_connection
+            close_thread_connection()
 
 class AnkiCardWorker(QThread):
     finished = pyqtSignal(object)
@@ -820,6 +823,9 @@ class ResultOverlay(QWidget):
         self.adjustSize()
 
     def display_words(self, token_list, x, y):
+        if not token_list:
+            return
+
         if USER_SETTINGS.get("enable_ai_fix", True):
             self.btn_ai_fix.show()
         else:
@@ -1036,6 +1042,13 @@ class SnippingWidget(QWidget):
         self.update()
 
     def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.RightButton:
+            import time
+            self.state = "HIDDEN"
+            self.hide()
+            self.last_snip_time = time.time()
+            return
+
         if event.button() == Qt.MouseButton.LeftButton:
             click_pos = event.position().toPoint()
 
@@ -1093,6 +1106,13 @@ class SnippingWidget(QWidget):
                     self.update()
 
     def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            import time
+            self.state = "HIDDEN"
+            self.hide()
+            self.last_snip_time = time.time()
+            return
+
         if self.state == "ADJUSTING":
             if event.key() == Qt.Key.Key_Return or event.key() == Qt.Key.Key_Enter:
                 import time
@@ -1104,12 +1124,6 @@ class SnippingWidget(QWidget):
                 poly_copy = QPolygon(self.polygon)
                 
                 QTimer.singleShot(100, lambda: self.process_image(poly_copy, rect.x(), rect.y()))
-                
-            elif event.key() == Qt.Key.Key_Escape:
-                import time
-                self.state = "HIDDEN"
-                self.hide()
-                self.last_snip_time = time.time()
 
     def paintEvent(self, event):
         if self.state == "HIDDEN":

@@ -44,6 +44,8 @@ def tokenize_sentence(text):
     return word_data
 
 def preprocess_image(pil_img, extract_color_range=None):
+    if pil_img.mode != "RGB":
+        pil_img = pil_img.convert("RGB")
     cv_img = np.array(pil_img)
     cv_img = cv2.cvtColor(cv_img, cv2.COLOR_RGB2BGR)
 
@@ -59,8 +61,13 @@ def preprocess_image(pil_img, extract_color_range=None):
     # grayscale
     gray = cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY)
 
-    # cubic interpolation
-    gray = cv2.resize(gray, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
+    # cubic interpolation with minimum dimension safety for CLAHE
+    h, w = gray.shape
+    if h == 0 or w == 0:
+        return pil_img
+    fx = max(2.5, 16.0 / max(1, w))
+    fy = max(2.5, 16.0 / max(1, h))
+    gray = cv2.resize(gray, None, fx=fx, fy=fy, interpolation=cv2.INTER_CUBIC)
 
     # polarity check
     h, w = gray.shape

@@ -1,6 +1,13 @@
 import sys
 import signal
 import os
+
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 import zipfile
 import shutil
 from pathlib import Path
@@ -1079,9 +1086,10 @@ def matches_hotkey(hotkey_str, trigger_key):
     alt_req = "alt" in parts
     shift_req = "shift" in parts
 
-    ctrl_down = any(k in active_keys for k in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r, keyboard.Key.ctrl))
-    alt_down = any(k in active_keys for k in (keyboard.Key.alt_l, keyboard.Key.alt_r, keyboard.Key.alt, keyboard.Key.alt_gr))
-    shift_down = any(k in active_keys for k in (keyboard.Key.shift, keyboard.Key.shift_l, keyboard.Key.shift_r))
+    current_keys = active_keys | {trigger_key} if trigger_key else active_keys
+    ctrl_down = any(k in current_keys for k in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r, keyboard.Key.ctrl))
+    alt_down = any(k in current_keys for k in (keyboard.Key.alt_l, keyboard.Key.alt_r, keyboard.Key.alt, keyboard.Key.alt_gr))
+    shift_down = any(k in current_keys for k in (keyboard.Key.shift, keyboard.Key.shift_l, keyboard.Key.shift_r))
 
     if ctrl_req != ctrl_down:
         return False

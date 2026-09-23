@@ -19,27 +19,42 @@ def load_rules():
         with open(DEINFLECT_PATH, 'r', encoding='utf-8') as f:
             data = json.load(f)
             
-        reasons = data.get("reasons", [])
-        raw_rules = data.get("rules", [])
         parsed_rules = []
-        
-        iterable_rules = raw_rules.values() if isinstance(raw_rules, dict) else raw_rules
-        
-        for rule in iterable_rules:
-            reason_val = rule.get("reason")
-            
-            # Map the integer ID to the actual grammatical term (e.g., "Past", "Causative")
-            if isinstance(reason_val, int) and reason_val < len(reasons):
-                reason_str = reasons[reason_val]
+
+        if isinstance(data, dict):
+            if "rules" in data:
+                reasons = data.get("reasons", [])
+                raw_rules = data.get("rules", [])
+                iterable_rules = raw_rules.values() if isinstance(raw_rules, dict) else raw_rules
+                for rule in iterable_rules:
+                    reason_val = rule.get("reason")
+                    if isinstance(reason_val, int) and reason_val < len(reasons):
+                        reason_str = reasons[reason_val]
+                    else:
+                        reason_str = str(reason_val) if reason_val is not None else ""
+                    parsed_rules.append({
+                        "kana_in": rule.get("kanaIn", ""),
+                        "kana_out": rule.get("kanaOut", ""),
+                        "reason": reason_str
+                    })
             else:
-                reason_str = str(reason_val)
-                
-            parsed_rules.append({
-                "kana_in": rule.get("kanaIn", ""),
-                "kana_out": rule.get("kanaOut", ""),
-                "reason": reason_str
-            })
-            
+                for reason_str, rules_list in data.items():
+                    if isinstance(rules_list, list):
+                        for rule in rules_list:
+                            parsed_rules.append({
+                                "kana_in": rule.get("kanaIn", ""),
+                                "kana_out": rule.get("kanaOut", ""),
+                                "reason": reason_str
+                            })
+        elif isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict):
+                    parsed_rules.append({
+                        "kana_in": item.get("kanaIn", ""),
+                        "kana_out": item.get("kanaOut", ""),
+                        "reason": str(item.get("reason", ""))
+                    })
+
         return parsed_rules
         
     except Exception as e:
@@ -49,7 +64,11 @@ def load_rules():
 RULES = load_rules()
 
 def get_base_forms(word):
+    if not word or not isinstance(word, str):
+        return []
+
     results = [{"term": word, "grammar_path": []}]
+    seen = {word}
     
     def search(current_word, current_path, depth):
         if depth > 3: # Most stacked conjugations rarely exceed 3 suffixes
@@ -60,20 +79,12 @@ def get_base_forms(word):
             if rule["kana_in"] and current_word.endswith(rule["kana_in"]):
                 # Strip the suffix and append the dictionary ending
                 base_guess = current_word[:-len(rule["kana_in"])] + rule["kana_out"]
-                new_path = current_path + [rule["reason"]]
-                
-                results.append({"term": base_guess, "grammar_path": new_path})
-                
-                # Recursively check the new base form for further conjugations
-                search(base_guess, new_path, depth + 1)
+                if base_guess and base_guess not in seen:
+                    seen.add(base_guess)
+                    new_path = current_path + [rule["reason"]]
+                    results.append({"term": base_guess, "grammar_path": new_path})
+                    # Recursively check the new base form for further conjugations
+                    search(base_guess, new_path, depth + 1)
                 
     search(word, [], 0)
-    
-    seen = set()
-    unique_results = []
-    for r in results:
-        if r["term"] not in seen:
-            seen.add(r["term"])
-            unique_results.append(r)
-            
-    return unique_results
+    return results

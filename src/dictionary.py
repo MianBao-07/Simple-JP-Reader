@@ -1,8 +1,24 @@
 import os
+import sys
 import json
 import requests
 import sqlite3
 import threading
+
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+def safe_print(msg):
+    try:
+        print(msg)
+    except Exception:
+        try:
+            print(msg.encode("ascii", errors="backslashreplace").decode("ascii"))
+        except Exception:
+            pass
 
 from pathlib import Path
 from deinflect import get_base_forms
@@ -28,16 +44,61 @@ def get_readonly_connection():
             _thread_local.conn = sqlite3.connect(DB_PATH)
     return _thread_local.conn
 
+def close_thread_connection():
+    """Safely closes the thread-local SQLite connection if open."""
+    if hasattr(_thread_local, "conn") and _thread_local.conn is not None:
+        try:
+            _thread_local.conn.close()
+        except Exception:
+            pass
+        _thread_local.conn = None
+
+def _clean_dict_name(name):
+    if not name:
+        return ""
+    cleaned = name
+    for s in [".zip", "[Term]", "[Kanji]", "[Freq]", "[Pitch]", "[Accent]", "(Kanji)", "(kanji)"]:
+        cleaned = cleaned.replace(s, "")
+    return cleaned.strip().lower()
+
+def is_dict_enabled(db_dict_name):
+    """Determines if a dictionary name in SQLite matches any currently enabled dictionary."""
+    if not ENABLED_DICTIONARIES:
+        return True
+    if db_dict_name in ENABLED_DICTIONARIES:
+        return True
+    clean_db = _clean_dict_name(db_dict_name)
+    if not clean_db:
+        return True
+    for enabled in ENABLED_DICTIONARIES:
+        if db_dict_name == enabled:
+            return True
+        clean_enabled = _clean_dict_name(enabled)
+        if clean_db == clean_enabled or clean_db in clean_enabled or clean_enabled in clean_db:
+            return True
+    return False
+
 def set_dictionary_enabled(dict_title, is_enabled):
+    if not dict_title:
+        return
+    cleaned = _clean_dict_name(dict_title)
     if is_enabled:
         ENABLED_DICTIONARIES.add(dict_title)
+        if cleaned:
+            ENABLED_DICTIONARIES.add(cleaned)
     else:
         ENABLED_DICTIONARIES.discard(dict_title)
+        if cleaned:
+            ENABLED_DICTIONARIES.discard(cleaned)
 
 def parse_yomitan_content(node):
     """Recursively flattens Yomitan structured content into clean, styled HTML."""
+    if node is None:
+        return ""
     if isinstance(node, str):
         return node
+    elif isinstance(node, (int, float)):
+        return str(node)
     elif isinstance(node, list):
         return "".join(parse_yomitan_content(n) for n in node)
     elif isinstance(node, dict):
@@ -246,7 +307,7 @@ def query_sqlite(term):
         cursor.execute("SELECT reading, dict_name, html_content FROM words WHERE term = ?", (term,))
         rows = cursor.fetchall()
         
-        filtered_rows = [row for row in rows if row[1] in ENABLED_DICTIONARIES or row[1].replace(" (Kanji)", "") in ENABLED_DICTIONARIES]
+        filtered_rows = [row for row in rows if is_dict_enabled(row[1])]
         
         if not filtered_rows:
             return None
@@ -261,14 +322,14 @@ def query_sqlite(term):
         # 2. Fetch Pitch Overrides from active dictionaries
         cursor.execute("SELECT pitch_drop, dict_name FROM meta_pitch WHERE term = ?", (term,))
         for p_row in cursor.fetchall():
-            if p_row[1] in ENABLED_DICTIONARIES:
+            if is_dict_enabled(p_row[1]):
                 data["pitch_drop"] = p_row[0]
                 break
 
         # 3. Fetch Freq Overrides from active dictionaries
         cursor.execute("SELECT freq_value, dict_name FROM meta_freq WHERE term = ?", (term,))
         for f_row in cursor.fetchall():
-            if f_row[1] in ENABLED_DICTIONARIES:
+            if is_dict_enabled(f_row[1]):
                 data["freq"] = f_row[0]
                 break
 
@@ -295,11 +356,16 @@ def query_sqlite(term):
         data["pitch"] = " ・ ".join(readings) if readings else "???"
 
         # Assemble the final list so the UI only prints one badge per dictionary
+        all_text = []
         for d_name, contents in dict_groups.items():
+            joined_content = "".join(contents)
             data["meanings_list"].append({
                 "dict_name": d_name,
-                "html_content": "".join(contents)
+                "html_content": joined_content
             })
+            all_text.append(joined_content)
+
+        data["meaning"] = "<br>".join(all_text) if all_text else "Definition not found."
 
         return data
 
@@ -329,12 +395,12 @@ def get_real_data(lookup_term, fallback_term=None):
             db_result = query_sqlite(term)
             if db_result:
                 grammar_str = " + ".join(candidate["grammar_path"]) if candidate["grammar_path"] else "Base Form"
-                print(f"-> Found '{term}' instantly via SQLite Database. [Grammar: {grammar_str}]")
+                safe_print(f"-> Found '{term}' instantly via SQLite Database. [Grammar: {grammar_str}]")
                 
                 db_result["grammar"] = candidate["grammar_path"]
                 return db_result
 
-    print(f"-> '{lookup_term}' not found offline. Asking Jisho API...")
+    safe_print(f"-> '{lookup_term}' not found offline. Asking Jisho API...")
     
     terms_to_try = [lookup_term]
     if fallback_term and fallback_term != lookup_term:

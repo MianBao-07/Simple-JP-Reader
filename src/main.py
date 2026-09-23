@@ -18,11 +18,11 @@ from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                              QScrollArea, QLineEdit, QPushButton, QProgressBar,
                              QFileDialog, QPlainTextEdit, QStackedWidget,
                              QSystemTrayIcon, QMenu)
-from PyQt6.QtGui import QIcon, QPainter, QColor, QFont, QPixmap
-from PyQt6.QtCore import Qt, QTimer, QEvent, QThread, pyqtSignal
+from PyQt6.QtGui import QIcon, QPainter, QColor, QFont, QPixmap, QDesktopServices
+from PyQt6.QtCore import Qt, QTimer, QEvent, QThread, pyqtSignal, QUrl
 
 from ui import ResultOverlay, SnippingWidget, signals, USER_SETTINGS, save_settings_disk
-from dictionary import set_dictionary_enabled, init_local_dictionaries_to_db
+from dictionary import set_dictionary_enabled, init_local_dictionaries_to_db, get_dictionary_stats
 
 class LoadingWidget(QWidget):
     def __init__(self):
@@ -365,30 +365,77 @@ class ControlPanel(QWidget):
         # PAGE 1: Main Workspace View
         self.workspace_view = QWidget()
         self.workspace_layout = QVBoxLayout(self.workspace_view)
-        self.workspace_layout.setContentsMargins(0, 0, 0, 0)
+        self.workspace_layout.setContentsMargins(8, 8, 8, 8)
+        self.workspace_layout.setSpacing(8)
         
-        self.default_lbl_text = "App is running in the background. Press 'Alt' to snip and 'Ctrl + Alt' for manual adjustments.\nClose this window to minimize it to the system tray."
-        self.lbl = QLabel(self.default_lbl_text)
-        self.lbl.setStyleSheet("font-weight: bold; margin-bottom: 5px;")
-        self.workspace_layout.addWidget(self.lbl)
-        
+        # --- Top Status & Quick Actions Banner ---
+        self.header_card = QWidget()
+        self.header_card.setObjectName("headerCard")
+        self.header_card.setStyleSheet("""
+            #headerCard {
+                background-color: #27272A;
+                border: 1px solid #3F3F46;
+                border-radius: 8px;
+            }
+        """)
+        header_layout = QHBoxLayout(self.header_card)
+        header_layout.setContentsMargins(12, 8, 12, 8)
+        header_layout.setSpacing(10)
+
+        left_status_box = QVBoxLayout()
+        left_status_box.setSpacing(2)
+
+        status_row = QHBoxLayout()
+        status_row.setSpacing(6)
+        self.lbl_status_dot = QLabel("●")
+        self.lbl_status_dot.setStyleSheet("color: #10B981; font-size: 12px;")
+        self.lbl_status_title = QLabel("Ready")
+        self.lbl_status_title.setStyleSheet("font-size: 13px; font-weight: bold; color: #F4F4F5;")
+        status_row.addWidget(self.lbl_status_dot)
+        status_row.addWidget(self.lbl_status_title)
+        status_row.addStretch()
+        left_status_box.addLayout(status_row)
+
+        self.lbl_status_hint = QLabel("Alt: Quick Snip  •  Ctrl + Alt: Manual Snip")
+        self.lbl_status_hint.setStyleSheet("font-size: 11px; color: #9CA3AF;")
+        left_status_box.addWidget(self.lbl_status_hint)
+        header_layout.addLayout(left_status_box, stretch=1)
+
+        btn_quick_snip = QPushButton("📷 Quick Snip")
+        btn_quick_snip.setFixedHeight(28)
+        btn_quick_snip.setStyleSheet("""
+            QPushButton { background-color: #3B82F6; color: white; font-weight: bold; font-size: 11px; padding: 4px 10px; border-radius: 4px; border: none; }
+            QPushButton:hover { background-color: #2563EB; }
+        """)
+        btn_quick_snip.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_quick_snip.clicked.connect(signals.trigger_quick_snip.emit)
+        header_layout.addWidget(btn_quick_snip)
+
+        btn_manual_snip = QPushButton("📐 Manual Snip")
+        btn_manual_snip.setFixedHeight(28)
+        btn_manual_snip.setStyleSheet("""
+            QPushButton { background-color: #3F3F46; color: #E4E4E7; font-weight: bold; font-size: 11px; padding: 4px 10px; border-radius: 4px; border: 1px solid #52525B; }
+            QPushButton:hover { background-color: #52525B; }
+        """)
+        btn_manual_snip.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_manual_snip.clicked.connect(signals.trigger_manual_snip.emit)
+        header_layout.addWidget(btn_manual_snip)
+
+        self.workspace_layout.addWidget(self.header_card)
+
+        # For backward compatibility
+        self.lbl = self.lbl_status_title
+        self.default_lbl_text = "Ready"
+
         self.tabs = QTabWidget()
         self.workspace_layout.addWidget(self.tabs)
         
         # TAB 1: History
         self.tab_history = QWidget()
         self.history_layout = QVBoxLayout(self.tab_history)
-        self.history_list = QListWidget()
-        self.history_list.setStyleSheet("""
-            QListWidget { font-size: 16px; padding: 5px; }
-            QListWidget::item { padding: 4px; border-bottom: 1px solid #444; }
-            QListWidget::item:hover { background-color: rgba(255, 255, 255, 20); cursor: pointer; }
-        """)
-        
-        # click2copy
-        self.history_list.itemClicked.connect(self.copy_history_item)
-        
-        self.history_layout.addWidget(self.history_list)
+        self.history_layout.setContentsMargins(4, 8, 4, 4)
+        self.history_layout.setSpacing(6)
+        self.init_history_tab()
         self.tabs.addTab(self.tab_history, "History")
         
         # TAB 2: Dictionaries
@@ -427,44 +474,302 @@ class ControlPanel(QWidget):
         self.scan_existing_dictionaries()
         self.stack.setCurrentIndex(1)
 
-    # copy logic
+    def init_history_tab(self):
+        # 1. Search Bar & Action Toolbar
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(6)
+
+        self.input_search_history = QLineEdit()
+        self.input_search_history.setPlaceholderText("Filter captured sentences...")
+        self.input_search_history.setFixedHeight(28)
+        self.input_search_history.setStyleSheet("""
+            QLineEdit {
+                background-color: #27272A;
+                color: #F4F4F5;
+                border: 1px solid #3F3F46;
+                border-radius: 4px;
+                padding: 2px 8px;
+                font-size: 12px;
+            }
+            QLineEdit:focus { border: 1px solid #3B82F6; }
+        """)
+        self.input_search_history.textChanged.connect(self.filter_history)
+        toolbar.addWidget(self.input_search_history, stretch=1)
+
+        self.lbl_history_count = QLabel("0 items")
+        self.lbl_history_count.setFixedHeight(28)
+        self.lbl_history_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_history_count.setStyleSheet("""
+            QLabel {
+                background-color: #27272A;
+                color: #A1A1AA;
+                border: 1px solid #3F3F46;
+                border-radius: 4px;
+                padding: 2px 8px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+        """)
+        toolbar.addWidget(self.lbl_history_count)
+
+        btn_copy_all = QPushButton("📋 Copy All")
+        btn_copy_all.setFixedHeight(28)
+        btn_copy_all.setStyleSheet("""
+            QPushButton { background-color: #27272A; color: #E4E4E7; border: 1px solid #3F3F46; border-radius: 4px; padding: 2px 8px; font-size: 11px; font-weight: bold; }
+            QPushButton:hover { background-color: #3F3F46; color: white; }
+        """)
+        btn_copy_all.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_copy_all.clicked.connect(self.copy_all_history)
+        toolbar.addWidget(btn_copy_all)
+
+        btn_export = QPushButton("💾 Export")
+        btn_export.setFixedHeight(28)
+        btn_export.setStyleSheet("""
+            QPushButton { background-color: #27272A; color: #E4E4E7; border: 1px solid #3F3F46; border-radius: 4px; padding: 2px 8px; font-size: 11px; font-weight: bold; }
+            QPushButton:hover { background-color: #3F3F46; color: white; }
+        """)
+        btn_export.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_export.clicked.connect(self.export_history_file)
+        toolbar.addWidget(btn_export)
+
+        btn_clear = QPushButton("🗑️")
+        btn_clear.setFixedHeight(28)
+        btn_clear.setFixedWidth(28)
+        btn_clear.setToolTip("Clear History")
+        btn_clear.setStyleSheet("""
+            QPushButton { background-color: #27272A; color: #EF4444; border: 1px solid #3F3F46; border-radius: 4px; font-size: 12px; }
+            QPushButton:hover { background-color: #EF4444; color: white; }
+        """)
+        btn_clear.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_clear.clicked.connect(self.clear_history)
+        toolbar.addWidget(btn_clear)
+
+        self.history_layout.addLayout(toolbar)
+
+        # 2. QStackedWidget for List vs Empty State
+        self.history_stack = QStackedWidget()
+
+        # Page 0: Empty State
+        empty_widget = QWidget()
+        empty_layout = QVBoxLayout(empty_widget)
+        empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_layout.setSpacing(6)
+
+        lbl_empty_title = QLabel("No Japanese Captured Yet")
+        lbl_empty_title.setStyleSheet("font-size: 15px; font-weight: bold; color: #E4E4E7;")
+        lbl_empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        lbl_empty_desc = QLabel(
+            "Use <b>Alt</b> for Quick Snip or <b>Ctrl + Alt</b> for Manual Snip.<br>"
+            "OCR-recognized sentences and translations will automatically collect here."
+        )
+        lbl_empty_desc.setStyleSheet("font-size: 12px; color: #71717A; line-height: 140%;")
+        lbl_empty_desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        empty_layout.addStretch()
+        empty_layout.addWidget(lbl_empty_title)
+        empty_layout.addWidget(lbl_empty_desc)
+        empty_layout.addStretch()
+        self.history_stack.addWidget(empty_widget)
+
+        # Page 1: History List
+        self.history_list = QListWidget()
+        self.history_list.setStyleSheet("""
+            QListWidget {
+                background-color: #18181B;
+                border: 1px solid #27272A;
+                border-radius: 6px;
+                font-size: 15px;
+                padding: 4px;
+            }
+            QListWidget::item {
+                padding: 8px 10px;
+                border-bottom: 1px solid #27272A;
+                border-radius: 4px;
+                color: #E4E4E7;
+            }
+            QListWidget::item:hover {
+                background-color: #27272A;
+                cursor: pointer;
+            }
+            QListWidget::item:selected {
+                background-color: #3B82F6;
+                color: white;
+            }
+        """)
+        self.history_list.itemClicked.connect(self.copy_history_item)
+        self.history_list.itemDoubleClicked.connect(self.inspect_history_item)
+        self.history_stack.addWidget(self.history_list)
+
+        self.history_layout.addWidget(self.history_stack, stretch=1)
+
+        # 3. Bottom hint bar
+        lbl_hint = QLabel("💡 Tip: Click sentence to copy  •  Double-click to re-analyze vocabulary")
+        lbl_hint.setStyleSheet("font-size: 11px; color: #71717A; margin-top: 2px;")
+        lbl_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.history_layout.addWidget(lbl_hint)
+
+        self.update_history_state()
+
+    def update_history_state(self, current_query=None):
+        count = self.history_list.count()
+        query = (current_query if current_query is not None else self.input_search_history.text()).strip().lower()
+        if count == 0:
+            self.history_stack.setCurrentIndex(0)
+            self.lbl_history_count.setText("0 items")
+        else:
+            self.history_stack.setCurrentIndex(1)
+            if query:
+                visible = sum(1 for i in range(count) if not self.history_list.item(i).isHidden())
+                self.lbl_history_count.setText(f"{visible}/{count} items")
+            else:
+                self.lbl_history_count.setText(f"{count} items")
+
+    def filter_history(self, text):
+        query = text.strip().lower()
+        count = self.history_list.count()
+        for i in range(count):
+            item = self.history_list.item(i)
+            item.setHidden(query not in item.text().lower())
+        self.update_history_state(current_query=query)
+
+    def copy_all_history(self):
+        count = self.history_list.count()
+        if count == 0:
+            return
+        texts = [self.history_list.item(i).text() for i in range(count)]
+        QApplication.clipboard().setText("\n".join(texts))
+        self.show_status_feedback(f"Copied all {count} items to clipboard!")
+
+    def export_history_file(self):
+        count = self.history_list.count()
+        if count == 0:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Export History", "history.txt", "Text Files (*.txt);;All Files (*)")
+        if not path:
+            return
+        try:
+            texts = [self.history_list.item(i).text() for i in range(count)]
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\n".join(texts) + "\n")
+            self.show_status_feedback("History exported successfully!")
+        except Exception as e:
+            self.show_status_feedback(f"Export failed: {e}", is_error=True)
+
+    def clear_history(self):
+        self.history_list.clear()
+        self.update_history_state()
+        self.show_status_feedback("History cleared.")
+
+    def inspect_history_item(self, item):
+        text = item.text().strip()
+        if not text:
+            return
+        try:
+            from model import tokenize_sentence
+            tokens = tokenize_sentence(text)
+            geo = self.geometry()
+            x = max(50, geo.x() + 40)
+            y = max(50, geo.y() + 60)
+            signals.show_results.emit(tokens, x, y)
+            self.show_status_feedback("Inspecting vocabulary...")
+        except Exception as e:
+            self.show_status_feedback(f"Analysis error: {e}", is_error=True)
+
     def copy_history_item(self, item):
-        # Send text to clipboard
         QApplication.clipboard().setText(item.text())
-        
-        # Give visual feedback
-        self.lbl.setText("Copied to clipboard!\n" + self.default_lbl_text.split('\n')[1])
-        self.lbl.setStyleSheet("font-weight: bold; margin-bottom: 5px; color: #10B981;") # Turn text green
-        
-        # Reset the label back to normal after 1.5 seconds
-        QTimer.singleShot(1500, self.reset_label)
+        self.show_status_feedback("Copied to clipboard!")
+
+    def show_status_feedback(self, message, is_error=False):
+        color = "#EF4444" if is_error else "#10B981"
+        self.lbl_status_title.setText(message)
+        self.lbl_status_title.setStyleSheet(f"font-size: 13px; font-weight: bold; color: {color};")
+        QTimer.singleShot(1800, self.reset_label)
 
     def reset_label(self):
-        self.lbl.setText(self.default_lbl_text)
-        self.lbl.setStyleSheet("font-weight: bold; margin-bottom: 5px; color: palette(window-text);")
+        self.lbl_status_title.setText("Ready")
+        self.lbl_status_title.setStyleSheet("font-size: 13px; font-weight: bold; color: #F4F4F5;")
 
     # --- TAB LAYOUTS ---
 
     def init_dictionary_tab(self):
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
-        scroll_area.setStyleSheet("QScrollArea { border: none; }")
+        scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         
         content_widget = QWidget()
         content_layout = QVBoxLayout(content_widget)
+        content_layout.setContentsMargins(4, 4, 4, 4)
+        content_layout.setSpacing(8)
 
-        # --- Import Button ---
-        self.btn_import_dict = QPushButton("📥 Import Local Yomitan Dictionary (.zip)")
-        self.btn_import_dict.setFixedHeight(35)
+        # --- 1. Database & Stats Status Banner ---
+        self.dict_stats_card = QWidget()
+        self.dict_stats_card.setObjectName("dictStatsCard")
+        self.dict_stats_card.setStyleSheet("""
+            #dictStatsCard {
+                background-color: #27272A;
+                border: 1px solid #3F3F46;
+                border-radius: 6px;
+            }
+        """)
+        stats_card_layout = QHBoxLayout(self.dict_stats_card)
+        stats_card_layout.setContentsMargins(12, 10, 12, 10)
+
+        stats_vbox = QVBoxLayout()
+        stats_vbox.setSpacing(2)
+
+        stats_top_row = QHBoxLayout()
+        stats_top_row.setSpacing(6)
+        dot = QLabel("●")
+        dot.setStyleSheet("color: #10B981; font-size: 12px;")
+        self.lbl_dict_stats = QLabel("Loading dictionary database...")
+        self.lbl_dict_stats.setStyleSheet("font-size: 13px; font-weight: bold; color: #F4F4F5;")
+        stats_top_row.addWidget(dot)
+        stats_top_row.addWidget(self.lbl_dict_stats)
+        stats_top_row.addStretch()
+        stats_vbox.addLayout(stats_top_row)
+
+        lbl_engine_badge = QLabel("Offline SQLite Engine  •  Instant Zero-Latency Lookups")
+        lbl_engine_badge.setStyleSheet("font-size: 11px; color: #9CA3AF;")
+        stats_vbox.addWidget(lbl_engine_badge)
+
+        stats_card_layout.addLayout(stats_vbox, stretch=1)
+        content_layout.addWidget(self.dict_stats_card)
+
+        # --- 2. Filter Bar & Import Button ---
+        actions_row = QHBoxLayout()
+        actions_row.setSpacing(6)
+
+        self.input_search_dicts = QLineEdit()
+        self.input_search_dicts.setPlaceholderText("Filter installed dictionaries...")
+        self.input_search_dicts.setFixedHeight(30)
+        self.input_search_dicts.setStyleSheet("""
+            QLineEdit {
+                background-color: #27272A;
+                color: #F4F4F5;
+                border: 1px solid #3F3F46;
+                border-radius: 4px;
+                padding: 2px 8px;
+                font-size: 12px;
+            }
+            QLineEdit:focus { border: 1px solid #3B82F6; }
+        """)
+        self.input_search_dicts.textChanged.connect(self.filter_dictionaries)
+        actions_row.addWidget(self.input_search_dicts, stretch=1)
+
+        self.btn_import_dict = QPushButton("📥 Import (.zip)")
+        self.btn_import_dict.setFixedHeight(30)
         self.btn_import_dict.setStyleSheet("""
-            QPushButton { background-color: #3B82F6; color: white; font-weight: bold; border-radius: 5px; margin-bottom: 10px; }
+            QPushButton { background-color: #3B82F6; color: white; font-weight: bold; font-size: 12px; border-radius: 4px; padding: 4px 12px; }
             QPushButton:hover { background-color: #2563EB; }
         """)
         self.btn_import_dict.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_import_dict.clicked.connect(self.import_local_dictionary)
-        content_layout.addWidget(self.btn_import_dict)
+        actions_row.addWidget(self.btn_import_dict)
 
-        # --- Dynamic Category Groups (Hidden by Default) ---
+        content_layout.addLayout(actions_row)
+
+        # --- 3. Dynamic Category Groups (Hidden by Default) ---
         self.group_term = QGroupBox("Term Dictionaries")
         self.l_term = QVBoxLayout()
         self.group_term.setLayout(self.l_term)
@@ -494,6 +799,56 @@ class ControlPanel(QWidget):
         self.group_imported.setLayout(self.l_imported)
         self.group_imported.hide()
         content_layout.addWidget(self.group_imported)
+
+        # --- 4. Recommended Dictionaries & Catalog Card ---
+        self.rec_card = QWidget()
+        self.rec_card.setObjectName("recCard")
+        self.rec_card.setStyleSheet("""
+            #recCard {
+                background-color: #18181B;
+                border: 1px solid #27272A;
+                border-radius: 6px;
+                padding: 4px;
+            }
+        """)
+        rec_layout = QVBoxLayout(self.rec_card)
+        rec_layout.setContentsMargins(12, 12, 12, 12)
+        rec_layout.setSpacing(8)
+
+        lbl_rec_title = QLabel("Recommended Yomitan Dictionaries")
+        lbl_rec_title.setStyleSheet("font-size: 13px; font-weight: bold; color: #F4F4F5;")
+        rec_layout.addWidget(lbl_rec_title)
+
+        lbl_rec_desc = QLabel(
+            "• <b>Jitendex / JMdict</b>: Comprehensive definitions & idioms<br>"
+            "• <b>KANJIDIC</b>: Stroke counts, readings, and radicals for individual kanji<br>"
+            "• <b>NHK Pitch Accent</b>: Accurate pitch downsteps and audio accents<br>"
+            "• <b>Innocent Corpus / Pixiv</b>: Real-world vocabulary frequency rankings"
+        )
+        lbl_rec_desc.setStyleSheet("font-size: 11px; color: #A1A1AA; line-height: 140%;")
+        rec_layout.addWidget(lbl_rec_desc)
+
+        btn_browse_dicts = QPushButton("🌐 Browse & Download Dictionaries (Yomitan Catalog)")
+        btn_browse_dicts.setFixedHeight(30)
+        btn_browse_dicts.setStyleSheet("""
+            QPushButton {
+                background-color: #27272A;
+                color: #60A5FA;
+                font-weight: bold;
+                font-size: 11px;
+                border: 1px solid #3F3F46;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #3F3F46;
+                color: #93C5FD;
+            }
+        """)
+        btn_browse_dicts.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_browse_dicts.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://yomitan.wiki/dictionaries/")))
+        rec_layout.addWidget(btn_browse_dicts)
+
+        content_layout.addWidget(self.rec_card)
 
         content_layout.addStretch()
         scroll_area.setWidget(content_widget)
@@ -528,6 +883,29 @@ class ControlPanel(QWidget):
         self.progress_container.hide() 
         self.dicts_layout.addWidget(self.progress_container)
 
+        self.update_dict_stats_banner()
+
+    def update_dict_stats_banner(self):
+        try:
+            stats = get_dictionary_stats()
+            terms = stats.get("total_terms", 0)
+            dicts = stats.get("active_dicts", 0)
+            if terms > 0:
+                self.lbl_dict_stats.setText(f"{terms:,} Definitions Indexed  •  {dicts} Packages Ready")
+            else:
+                self.lbl_dict_stats.setText("No Definitions Indexed  •  Import a Dictionary Below")
+        except Exception:
+            self.lbl_dict_stats.setText("Offline Dictionary Engine Ready")
+
+    def filter_dictionaries(self, query):
+        q = query.strip().lower()
+        for layout in [self.l_term, self.l_kanji, self.l_pitch, self.l_freq, self.l_imported]:
+            for i in range(layout.count()):
+                w = layout.itemAt(i).widget()
+                if isinstance(w, DictionaryRow):
+                    w.setVisible(q in w.name.lower())
+        self.update_group_visibility()
+
     def get_folder_size_mb(self, path):
         total = 0
         try:
@@ -543,6 +921,7 @@ class ControlPanel(QWidget):
     def scan_existing_dictionaries(self):
         dict_root = Path(os.getcwd()) / "dictionaries"
         if not dict_root.exists():
+            self.update_dict_stats_banner()
             return
 
         existing_names = set()
@@ -581,6 +960,7 @@ class ControlPanel(QWidget):
             
         # Update visibility for all groups once the scan finishes
         self.update_group_visibility()
+        self.update_dict_stats_banner()
 
     def check_group_visibility(self):
         QTimer.singleShot(50, self.update_group_visibility)
@@ -595,13 +975,13 @@ class ControlPanel(QWidget):
         ]
         
         for group, layout in groups:
-            has_items = False
+            has_visible = False
             for i in range(layout.count()):
                 widget = layout.itemAt(i).widget()
-                if isinstance(widget, DictionaryRow):
-                    has_items = True
+                if isinstance(widget, DictionaryRow) and not widget.isHidden():
+                    has_visible = True
                     break
-            group.setVisible(has_items)
+            group.setVisible(has_visible)
 
     def import_local_dictionary(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Select Yomitan Dictionary Zip", "", "Zip Files (*.zip)")
@@ -674,6 +1054,7 @@ class ControlPanel(QWidget):
 
         from dictionary import init_local_dictionaries_to_db
         init_local_dictionaries_to_db()
+        self.update_dict_stats_banner()
 
     def init_anki_tab(self):
         group_target = QGroupBox("Target Deck & Note Type")
@@ -1049,8 +1430,12 @@ class ControlPanel(QWidget):
     # --- CORE LOGIC ---
 
     def add_to_history(self, text):
-        self.history_list.addItem(text)
+        clean = text.strip() if text else ""
+        if not clean:
+            return
+        self.history_list.addItem(clean)
         self.history_list.scrollToBottom()
+        self.update_history_state()
 
     def show_and_activate(self):
         self.show()

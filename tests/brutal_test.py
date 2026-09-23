@@ -324,19 +324,24 @@ class TestAnkiExportBrutal(unittest.TestCase):
         self.assertEqual(self.anki.auto_highlight("猫が好きです。", ""), "猫が好きです。")
 
     def test_anki_offline_graceful_handling(self):
-        # With Anki closed, invoke should return an error dict, not raise an unhandled exception
-        res = self.anki.invoke("version")
-        self.assertIsInstance(res, dict)
-        self.assertIn("error", res)
+        # With Anki closed/unreachable, invoke should return an error dict, not raise an unhandled exception
+        orig_url = self.anki.ANKI_URL
+        try:
+            self.anki.ANKI_URL = "http://127.0.0.1:59999"
+            res = self.anki.invoke("version")
+            self.assertIsInstance(res, dict)
+            self.assertIn("error", res)
 
-        alive = self.anki.is_anki_alive()
-        self.assertFalse(alive)
+            alive = self.anki.is_anki_alive()
+            self.assertFalse(alive)
 
-        decks = self.anki.get_deck_names()
-        self.assertIsInstance(decks, list)
+            decks = self.anki.get_deck_names()
+            self.assertIsInstance(decks, list)
 
-        exists = self.anki.check_card_exists("Default", "猫")
-        self.assertFalse(exists)
+            exists = self.anki.check_card_exists("Default", "猫")
+            self.assertFalse(exists)
+        finally:
+            self.anki.ANKI_URL = orig_url
 
 
 class TestUIAndWidgetsBrutal(unittest.TestCase):
@@ -471,6 +476,63 @@ class TestUIAndWidgetsBrutal(unittest.TestCase):
         panel2.startup_worker.wait()
         
         USER_SETTINGS["minimize_to_tray"] = False
+
+    def test_history_tab_features(self):
+        import main
+        from ui import signals
+        panel = main.ControlPanel(None)
+        
+        # Initial empty state
+        self.assertEqual(panel.history_stack.currentIndex(), 0)
+        self.assertEqual(panel.lbl_history_count.text(), "0 items")
+        
+        # Add sentences
+        panel.add_to_history("吾輩は猫である。")
+        panel.add_to_history("名前はまだ無い。")
+        self.assertEqual(panel.history_stack.currentIndex(), 1)
+        self.assertEqual(panel.history_list.count(), 2)
+        self.assertEqual(panel.lbl_history_count.text(), "2 items")
+        
+        # Search / filter
+        panel.filter_history("猫")
+        self.assertEqual(panel.lbl_history_count.text(), "1/2 items")
+        panel.filter_history("存在しない")
+        self.assertEqual(panel.lbl_history_count.text(), "0/2 items")
+        panel.filter_history("")
+        self.assertEqual(panel.lbl_history_count.text(), "2 items")
+        
+        # Copy All
+        panel.copy_all_history()
+        
+        # Double-click inspect signal emission
+        emitted_signals = []
+        signals.show_results.connect(lambda tokens, x, y: emitted_signals.append((tokens, x, y)))
+        panel.inspect_history_item(panel.history_list.item(0))
+        self.assertEqual(len(emitted_signals), 1)
+        self.assertGreater(len(emitted_signals[0][0]), 0) # Token list not empty
+        
+        # Clear
+        panel.clear_history()
+        self.assertEqual(panel.history_list.count(), 0)
+        self.assertEqual(panel.history_stack.currentIndex(), 0)
+        self.assertEqual(panel.lbl_history_count.text(), "0 items")
+        panel.startup_worker.wait()
+
+    def test_dictionary_tab_upgrades(self):
+        import main
+        import dictionary
+        panel = main.ControlPanel(None)
+        
+        # Stats banner
+        stats = dictionary.get_dictionary_stats()
+        self.assertIn("total_terms", stats)
+        self.assertIn("active_dicts", stats)
+        self.assertIn("Definitions Indexed", panel.lbl_dict_stats.text())
+        
+        # Dictionary filter
+        panel.filter_dictionaries("non_existent_dict_xyz")
+        panel.filter_dictionaries("")
+        panel.startup_worker.wait()
 
 
 class TestConcurrentAndFuzzBrutal(unittest.TestCase):

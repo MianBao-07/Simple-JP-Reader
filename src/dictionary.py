@@ -53,6 +53,21 @@ def close_thread_connection():
             pass
         _thread_local.conn = None
 
+def get_dictionary_stats():
+    """Returns a dict with total term count and distinct dictionaries installed."""
+    conn = get_readonly_connection()
+    if not conn:
+        return {"total_terms": 0, "active_dicts": 0}
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM words")
+        total_terms = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(DISTINCT dict_name) FROM words")
+        active_dicts = cursor.fetchone()[0]
+        return {"total_terms": total_terms, "active_dicts": active_dicts}
+    except Exception:
+        return {"total_terms": 0, "active_dicts": 0}
+
 def _clean_dict_name(name):
     if not name:
         return ""

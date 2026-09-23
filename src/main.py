@@ -721,10 +721,6 @@ class ControlPanel(QWidget):
         self.lbl_dict_stats.setStyleSheet("font-size: 13px; font-weight: bold; color: #F4F4F5;")
         stats_vbox.addWidget(self.lbl_dict_stats)
 
-        lbl_engine_badge = QLabel("Offline SQLite Engine  •  Instant Zero-Latency Lookups")
-        lbl_engine_badge.setStyleSheet("font-size: 11px; color: #9CA3AF;")
-        stats_vbox.addWidget(lbl_engine_badge)
-
         stats_card_layout.addLayout(stats_vbox, stretch=1)
         content_layout.addWidget(self.dict_stats_card)
 

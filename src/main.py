@@ -382,26 +382,11 @@ class ControlPanel(QWidget):
         header_layout.setContentsMargins(12, 8, 12, 8)
         header_layout.setSpacing(10)
 
-        left_status_box = QVBoxLayout()
-        left_status_box.setSpacing(2)
-
-        status_row = QHBoxLayout()
-        status_row.setSpacing(6)
-        self.lbl_status_dot = QLabel("●")
-        self.lbl_status_dot.setStyleSheet("color: #10B981; font-size: 12px;")
-        self.lbl_status_title = QLabel("Ready")
-        self.lbl_status_title.setStyleSheet("font-size: 13px; font-weight: bold; color: #F4F4F5;")
-        status_row.addWidget(self.lbl_status_dot)
-        status_row.addWidget(self.lbl_status_title)
-        status_row.addStretch()
-        left_status_box.addLayout(status_row)
-
         self.lbl_status_hint = QLabel("Alt: Quick Snip  •  Ctrl + Alt: Manual Snip")
-        self.lbl_status_hint.setStyleSheet("font-size: 11px; color: #9CA3AF;")
-        left_status_box.addWidget(self.lbl_status_hint)
-        header_layout.addLayout(left_status_box, stretch=1)
+        self.lbl_status_hint.setStyleSheet("font-size: 12px; color: #D4D4D8;")
+        header_layout.addWidget(self.lbl_status_hint, stretch=1)
 
-        btn_quick_snip = QPushButton("📷 Quick Snip")
+        btn_quick_snip = QPushButton("Quick Snip")
         btn_quick_snip.setFixedHeight(28)
         btn_quick_snip.setStyleSheet("""
             QPushButton { background-color: #3B82F6; color: white; font-weight: bold; font-size: 11px; padding: 4px 10px; border-radius: 4px; border: none; }
@@ -411,7 +396,7 @@ class ControlPanel(QWidget):
         btn_quick_snip.clicked.connect(signals.trigger_quick_snip.emit)
         header_layout.addWidget(btn_quick_snip)
 
-        btn_manual_snip = QPushButton("📐 Manual Snip")
+        btn_manual_snip = QPushButton("Manual Snip")
         btn_manual_snip.setFixedHeight(28)
         btn_manual_snip.setStyleSheet("""
             QPushButton { background-color: #3F3F46; color: #E4E4E7; font-weight: bold; font-size: 11px; padding: 4px 10px; border-radius: 4px; border: 1px solid #52525B; }
@@ -424,8 +409,9 @@ class ControlPanel(QWidget):
         self.workspace_layout.addWidget(self.header_card)
 
         # For backward compatibility
-        self.lbl = self.lbl_status_title
-        self.default_lbl_text = "Ready"
+        self.lbl = self.lbl_status_hint
+        self.lbl_status_title = self.lbl_status_hint
+        self.default_lbl_text = "Alt: Quick Snip  •  Ctrl + Alt: Manual Snip"
 
         self.tabs = QTabWidget()
         self.workspace_layout.addWidget(self.tabs)
@@ -512,7 +498,7 @@ class ControlPanel(QWidget):
         """)
         toolbar.addWidget(self.lbl_history_count)
 
-        btn_copy_all = QPushButton("📋 Copy All")
+        btn_copy_all = QPushButton("Copy All")
         btn_copy_all.setFixedHeight(28)
         btn_copy_all.setStyleSheet("""
             QPushButton { background-color: #27272A; color: #E4E4E7; border: 1px solid #3F3F46; border-radius: 4px; padding: 2px 8px; font-size: 11px; font-weight: bold; }
@@ -522,7 +508,7 @@ class ControlPanel(QWidget):
         btn_copy_all.clicked.connect(self.copy_all_history)
         toolbar.addWidget(btn_copy_all)
 
-        btn_export = QPushButton("💾 Export")
+        btn_export = QPushButton("Export")
         btn_export.setFixedHeight(28)
         btn_export.setStyleSheet("""
             QPushButton { background-color: #27272A; color: #E4E4E7; border: 1px solid #3F3F46; border-radius: 4px; padding: 2px 8px; font-size: 11px; font-weight: bold; }
@@ -604,7 +590,7 @@ class ControlPanel(QWidget):
         self.history_layout.addWidget(self.history_stack, stretch=1)
 
         # 3. Bottom hint bar
-        lbl_hint = QLabel("💡 Tip: Click sentence to copy  •  Double-click to re-analyze vocabulary")
+        lbl_hint = QLabel("Tip: Click sentence to copy  •  Double-click to re-analyze vocabulary")
         lbl_hint.setStyleSheet("font-size: 11px; color: #71717A; margin-top: 2px;")
         lbl_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.history_layout.addWidget(lbl_hint)
@@ -682,13 +668,13 @@ class ControlPanel(QWidget):
 
     def show_status_feedback(self, message, is_error=False):
         color = "#EF4444" if is_error else "#10B981"
-        self.lbl_status_title.setText(message)
-        self.lbl_status_title.setStyleSheet(f"font-size: 13px; font-weight: bold; color: {color};")
+        self.lbl_status_hint.setText(message)
+        self.lbl_status_hint.setStyleSheet(f"font-size: 12px; font-weight: bold; color: {color};")
         QTimer.singleShot(1800, self.reset_label)
 
     def reset_label(self):
-        self.lbl_status_title.setText("Ready")
-        self.lbl_status_title.setStyleSheet("font-size: 13px; font-weight: bold; color: #F4F4F5;")
+        self.lbl_status_hint.setText("Alt: Quick Snip  •  Ctrl + Alt: Manual Snip")
+        self.lbl_status_hint.setStyleSheet("font-size: 12px; color: #D4D4D8;")
 
     # --- TAB LAYOUTS ---
 
@@ -718,16 +704,9 @@ class ControlPanel(QWidget):
         stats_vbox = QVBoxLayout()
         stats_vbox.setSpacing(2)
 
-        stats_top_row = QHBoxLayout()
-        stats_top_row.setSpacing(6)
-        dot = QLabel("●")
-        dot.setStyleSheet("color: #10B981; font-size: 12px;")
         self.lbl_dict_stats = QLabel("Loading dictionary database...")
         self.lbl_dict_stats.setStyleSheet("font-size: 13px; font-weight: bold; color: #F4F4F5;")
-        stats_top_row.addWidget(dot)
-        stats_top_row.addWidget(self.lbl_dict_stats)
-        stats_top_row.addStretch()
-        stats_vbox.addLayout(stats_top_row)
+        stats_vbox.addWidget(self.lbl_dict_stats)
 
         lbl_engine_badge = QLabel("Offline SQLite Engine  •  Instant Zero-Latency Lookups")
         lbl_engine_badge.setStyleSheet("font-size: 11px; color: #9CA3AF;")
@@ -757,7 +736,7 @@ class ControlPanel(QWidget):
         self.input_search_dicts.textChanged.connect(self.filter_dictionaries)
         actions_row.addWidget(self.input_search_dicts, stretch=1)
 
-        self.btn_import_dict = QPushButton("📥 Import (.zip)")
+        self.btn_import_dict = QPushButton("Import (.zip)")
         self.btn_import_dict.setFixedHeight(30)
         self.btn_import_dict.setStyleSheet("""
             QPushButton { background-color: #3B82F6; color: white; font-weight: bold; font-size: 12px; border-radius: 4px; padding: 4px 12px; }
@@ -828,7 +807,7 @@ class ControlPanel(QWidget):
         lbl_rec_desc.setStyleSheet("font-size: 11px; color: #A1A1AA; line-height: 140%;")
         rec_layout.addWidget(lbl_rec_desc)
 
-        btn_browse_dicts = QPushButton("🌐 Browse & Download Dictionaries (Yomitan Catalog)")
+        btn_browse_dicts = QPushButton("Browse & Download Dictionaries (Yomitan Catalog)")
         btn_browse_dicts.setFixedHeight(30)
         btn_browse_dicts.setStyleSheet("""
             QPushButton {

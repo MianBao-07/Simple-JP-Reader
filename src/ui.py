@@ -6,7 +6,7 @@ from PyQt6.QtCore import Qt, QRect, QPoint, QTimer, pyqtSignal, QObject, QThread
 from PyQt6.QtGui import (QGuiApplication, QPainter, QPen, QColor, QBrush, QPolygon, 
                          QPolygonF, QPixmap, QImage, QPainterPath)
 
-from dictionary import get_real_data
+from dictionary import get_real_data, is_pure_punctuation_or_symbol
 from model import extract_words, tokenize_sentence
 from translation import translate_text
 from ai_fix import fix_japanese_ocr
@@ -302,8 +302,22 @@ class ExpandableWordWidget(QWidget):
         self.sep.setStyleSheet("background-color: rgba(255, 255, 255, 30);")
         self.layout.addWidget(self.sep)
 
-        self.fetch_data()
-        self.check_anki_duplicate()
+        if is_pure_punctuation_or_symbol(self.surface):
+            self.btn_toggle.hide()
+            self.btn_anki.hide()
+            self.pitch_graph.hide()
+            self.data_fetched = True
+            self.cached_dict_data = {
+                "pitch": self.surface,
+                "pitch_drop": -1,
+                "freq": "Symbol",
+                "meaning": "",
+                "grammar": [],
+                "meanings_list": []
+            }
+        else:
+            self.fetch_data()
+            self.check_anki_duplicate()
 
     def check_anki_duplicate(self):
         deck = USER_SETTINGS.get("anki_deck", "Default")

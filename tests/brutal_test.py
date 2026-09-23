@@ -506,10 +506,14 @@ class TestUIAndWidgetsBrutal(unittest.TestCase):
         
         # Double-click inspect signal emission
         emitted_signals = []
-        signals.show_results.connect(lambda tokens, x, y: emitted_signals.append((tokens, x, y)))
-        panel.inspect_history_item(panel.history_list.item(0))
-        self.assertEqual(len(emitted_signals), 1)
-        self.assertGreater(len(emitted_signals[0][0]), 0) # Token list not empty
+        slot = lambda tokens, x, y: emitted_signals.append((tokens, x, y))
+        signals.show_results.connect(slot)
+        try:
+            panel.inspect_history_item(panel.history_list.item(0))
+            self.assertEqual(len(emitted_signals), 1)
+            self.assertGreater(len(emitted_signals[0][0]), 0) # Token list not empty
+        finally:
+            signals.show_results.disconnect(slot)
         
         # Clear
         panel.clear_history()

@@ -5,25 +5,46 @@ import numpy as np
 from janome.tokenizer import Tokenizer
 from PIL import Image, ImageOps, ImageEnhance
 
+import threading
+
 _mocr = None
 _tokenizer = None
+_ocr_lock = threading.Lock()
+_tok_lock = threading.Lock()
 
 def get_tokenizer():
     """Returns a shared Janome Tokenizer instance (singleton)."""
     global _tokenizer
     if _tokenizer is None:
-        _tokenizer = Tokenizer()
+        with _tok_lock:
+            if _tokenizer is None:
+                _tokenizer = Tokenizer()
     return _tokenizer
 
 def get_ocr_engine():
-    """Lazily loads and returns the MangaOcr engine instance."""
+    """Lazily loads and returns the MangaOcr engine instance (thread-safe singleton)."""
     global _mocr
     if _mocr is None:
-        print("[OCR] Loading MangaOCR model (first-time init)...")
-        from manga_ocr import MangaOcr
-        _mocr = MangaOcr()
-        print("[OCR] MangaOCR loaded successfully.")
+        with _ocr_lock:
+            if _mocr is None:
+                print("[OCR] Loading MangaOCR model (first-time init)...")
+                from manga_ocr import MangaOcr
+                _mocr = MangaOcr()
+                print("[OCR] MangaOCR loaded successfully.")
     return _mocr
+
+def warmup_ocr():
+    """Pre-loads the MangaOCR model and warms up inference so the first snip is instantaneous."""
+    global _mocr
+    if _mocr is not None:
+        return
+    ocr = get_ocr_engine()
+    if ocr is not None:
+        try:
+            dummy = Image.new("RGB", (32, 32), color="white")
+            ocr(dummy)
+        except Exception as e:
+            print(f"[OCR] Warmup notice: {e}")
 
 def tokenize_sentence(text):
     tokenizer = get_tokenizer()

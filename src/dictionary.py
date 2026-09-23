@@ -39,10 +39,61 @@ def get_readonly_connection():
         return None
     if not hasattr(_thread_local, "conn") or _thread_local.conn is None:
         try:
-            _thread_local.conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+            conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
         except Exception:
-            _thread_local.conn = sqlite3.connect(DB_PATH)
+            conn = sqlite3.connect(DB_PATH)
+        try:
+            conn.execute("PRAGMA mmap_size = 268435456")
+            conn.execute("PRAGMA cache_size = -64000")
+            conn.execute("PRAGMA temp_store = MEMORY")
+        except Exception:
+            pass
+        _thread_local.conn = conn
     return _thread_local.conn
+
+def is_pure_punctuation_or_symbol(text):
+    """Returns True if the text contains only punctuation, whitespace, or symbols without Japanese/Latin content."""
+    if not text:
+        return True
+    import unicodedata
+    for char in text:
+        code = ord(char)
+        if 0x4E00 <= code <= 0x9FFF or 0x3400 <= code <= 0x4DBF: # CJK Kanji
+            return False
+        if 0x3040 <= code <= 0x309F: # Hiragana
+            return False
+        if 0x30A0 <= code <= 0x30FF: # Katakana
+            return False
+        if 0xFF66 <= code <= 0xFF9F: # Half-width Katakana
+            return False
+        cat = unicodedata.category(char)
+        if cat.startswith(('L', 'N')): # Letter or Number
+            return False
+    return True
+
+def warmup_dictionary_engine():
+    """Pre-warms the SQLite connection, PRAGMA caches, and indexes."""
+    conn = get_readonly_connection()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 FROM words LIMIT 1")
+            cursor.fetchone()
+            cursor.execute("SELECT 1 FROM meta_pitch LIMIT 1")
+            cursor.fetchone()
+            cursor.execute("SELECT 1 FROM meta_freq LIMIT 1")
+            cursor.fetchone()
+        except Exception:
+            pass
+    try:
+        from deinflect import get_base_forms
+        get_base_forms("食べた")
+    except Exception:
+        pass
+    try:
+        get_real_data("日本語")
+    except Exception:
+        pass
 
 def close_thread_connection():
     """Safely closes the thread-local SQLite connection if open."""
@@ -398,6 +449,17 @@ def get_real_data(lookup_term, fallback_term=None):
         "grammar": [] 
     }
 
+    if not lookup_term or is_pure_punctuation_or_symbol(lookup_term):
+        return {
+            "pitch": lookup_term or "",
+            "pitch_drop": -1,
+            "freq": "Symbol",
+            "jlpt": None,
+            "meaning": "",
+            "grammar": [],
+            "meanings_list": []
+        }
+
     candidates = get_base_forms(lookup_term)
     
     if fallback_term and fallback_term != lookup_term:
@@ -422,12 +484,12 @@ def get_real_data(lookup_term, fallback_term=None):
         terms_to_try.append(fallback_term)
 
     for term in terms_to_try:
-        if not term or not term.strip():
+        if not term or not term.strip() or is_pure_punctuation_or_symbol(term):
             continue
             
         try:
             url = f"https://jisho.org/api/v1/search/words?keyword={term}"
-            response = requests.get(url, timeout=5)
+            response = requests.get(url, timeout=1.5)
             result = response.json()
             
             if result.get("data"):

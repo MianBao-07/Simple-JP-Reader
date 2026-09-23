@@ -91,37 +91,50 @@ class StartupWorker(QThread):
         import time
 
         # Step 1: Configuration
-        self.progress.emit(20, "Loading Configuration", "Reading user settings and custom CSS...")
-        time.sleep(0.08)
+        self.progress.emit(10, "Loading Configuration", "Reading user settings and preferences...")
+        time.sleep(0.05)
         self.step_done.emit("Configuration and settings loaded")
 
-        # Step 2: Database Initialization
-        self.progress.emit(45, "Checking Local Database", "Connecting SQLite dictionary tables...")
+        # Step 2: Database Initialization & Offline Dictionary Engine
+        self.progress.emit(25, "Loading Dictionaries", "Indexing SQLite database and warming up offline engine...")
         try:
-            from dictionary import init_local_dictionaries_to_db
+            from dictionary import init_local_dictionaries_to_db, warmup_dictionary_engine, get_dictionary_stats
             init_local_dictionaries_to_db()
-            self.step_done.emit("SQLite dictionary database connected and indexed")
+            warmup_dictionary_engine()
+            stats = get_dictionary_stats()
+            terms = stats.get("total_terms", 0)
+            self.step_done.emit(f"SQLite dictionary engine loaded ({terms:,} definitions indexed)")
         except Exception as e:
-            self.step_done.emit(f"Database check notice: {e}")
+            self.step_done.emit(f"Dictionary check notice: {e}")
 
-        # Step 3: Scan Dictionaries
-        self.progress.emit(70, "Scanning Dictionaries", "Detecting installed Yomitan dictionary folders...")
+        # Step 3: Scan Installed Packages
+        self.progress.emit(45, "Scanning Dictionaries", "Detecting installed Yomitan packages...")
         dict_root = Path(os.getcwd()) / "dictionaries"
         count = 0
         if dict_root.exists():
             count = sum(1 for d in dict_root.iterdir() if d.is_dir())
         self.step_done.emit(f"Found {count} installed Yomitan dictionary package(s)")
 
-        # Step 4: Tokenizer
-        self.progress.emit(90, "Initializing Tokenizer", "Loading Janome linguistic parser...")
+        # Step 4: Tokenizer & Deinflector
+        self.progress.emit(60, "Initializing Tokenizer", "Loading Janome linguistic parser & deinflector...")
         try:
             from model import get_tokenizer
-            get_tokenizer()
-            self.step_done.emit("Janome Japanese tokenizer ready")
+            tok = get_tokenizer()
+            tok.tokenize("日本語形態素解析")
+            self.step_done.emit("Janome Japanese tokenizer & grammatical deinflector ready")
         except Exception as e:
             self.step_done.emit(f"Tokenizer notice: {e}")
 
-        # Step 5: Finalizing
+        # Step 5: Preload MangaOCR Model
+        self.progress.emit(75, "Loading AI OCR Model", "Pre-loading MangaOCR neural network into memory...")
+        try:
+            from model import warmup_ocr
+            warmup_ocr()
+            self.step_done.emit("MangaOCR vision model loaded and warmed up")
+        except Exception as e:
+            self.step_done.emit(f"OCR model notice: {e}")
+
+        # Step 6: Ready
         self.progress.emit(100, "Ready", "Preparing workspace...")
         time.sleep(0.08)
         self.step_done.emit("Screen snipping shortcuts active (Alt / Ctrl+Alt)")

@@ -53,6 +53,8 @@ def fix_japanese_ocr(image_path, current_text, engine="google", api_key="", base
             if not effective_base_url:
                 effective_base_url = "https://integrate.api.nvidia.com/v1"
             effective_model = vision_model.strip() if vision_model else "meta/llama-3.2-90b-vision-instruct"
+            if "build.nvidia.com/" in effective_model:
+                effective_model = effective_model.split("build.nvidia.com/")[-1].strip("/")
         else: # local
             if not effective_base_url:
                 effective_base_url = "http://localhost:11434/v1"

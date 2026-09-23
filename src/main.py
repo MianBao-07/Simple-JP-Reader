@@ -981,9 +981,17 @@ class ControlPanel(QWidget):
             USER_SETTINGS["ai_engine"] = "deepl"
             
         USER_SETTINGS["global_api_key"] = self.input_api_key.text().strip()
-        USER_SETTINGS["local_base_url"] = self.input_base_url.text().strip()
-        USER_SETTINGS["vision_model"] = self.input_vision_model.text().strip()
-        USER_SETTINGS["text_model"] = self.input_text_model.text().strip()
+        v_model = self.input_vision_model.text().strip()
+        if "build.nvidia.com/" in v_model:
+            v_model = v_model.split("build.nvidia.com/")[-1].strip("/")
+            self.input_vision_model.setText(v_model)
+        USER_SETTINGS["vision_model"] = v_model
+
+        t_model = self.input_text_model.text().strip()
+        if "build.nvidia.com/" in t_model:
+            t_model = t_model.split("build.nvidia.com/")[-1].strip("/")
+            self.input_text_model.setText(t_model)
+        USER_SETTINGS["text_model"] = t_model
 
         USER_SETTINGS["show_pitch"] = self.chk_show_pitch.isChecked()
         USER_SETTINGS["show_freq"] = self.chk_show_freq.isChecked()

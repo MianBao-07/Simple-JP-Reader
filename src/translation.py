@@ -44,6 +44,9 @@ def translate_text(text, engine="google", api_key="", base_url="", text_model=""
             "Content-Type": "application/json"
         }
         model_name = text_model.strip() if text_model else "meta/llama-3.1-70b-instruct"
+        if "build.nvidia.com/" in model_name:
+            model_name = model_name.split("build.nvidia.com/")[-1].strip("/")
+
         payload = {
             "model": model_name,
             "messages": [
@@ -56,7 +59,16 @@ def translate_text(text, engine="google", api_key="", base_url="", text_model=""
         
         try:
             response = requests.post(url, headers=headers, json=payload, timeout=12)
-            response.raise_for_status()
+            if response.status_code != 200:
+                err_detail = ""
+                try:
+                    err_json = response.json()
+                    err_detail = err_json.get("detail", err_json.get("message", response.text))
+                except Exception:
+                    err_detail = response.text
+                if response.status_code == 404:
+                    return f"NVIDIA API Error (404): Model '{model_name}' was not found. Use the model ID (e.g. nvidia/riva-translate-4b-instruct-v2) instead of the build.nvidia.com URL."
+                return f"NVIDIA API Error ({response.status_code}): {err_detail}"
             translated_text = response.json()["choices"][0]["message"]["content"].strip()
         except requests.exceptions.Timeout:
             return "NVIDIA API Error: Connection timed out. The server might be busy."
